@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 import yaml
 from scraper import CONTENT, DATA, duplicate, history, save_json
 from newsroom import (APIError, Rejected, Reader, Gemini, SELECT, EXTRACT, WRITE, VERIFY,
-                      collect, check_dossier, check_draft, render_markdown, source_group)
+                      collect, check_dossier, check_draft, render_markdown, source_group,
+                      prepare_article, review_result, diagnostic_text)
 
 
 def report(status, message, **extra):
@@ -19,7 +20,7 @@ def report(status, message, **extra):
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:
             stream.write("\n## Sygnał Dnia — wynik generacji\n\nStatus: **" + status + "**\n\n")
-            stream.write("~~~~text\n" + message.replace("~", "")[:1500] + "\n~~~~\n")
+            stream.write("~~~~text\n" + message.replace("~", "").replace("<", "&lt;").replace(">", "&gt;")[:10000] + "\n~~~~\n")
 
 
 def select_topics(ai, queue, records):
@@ -50,8 +51,7 @@ def select_topics(ai, queue, records):
 
 
 def check_review(review):
-    if review.get("approved") is not True or review.get("issues") != []:
-        raise Rejected("Kontrola redakcyjna nie zatwierdziła tekstu.")
+    review_result(review)
 
 
 def run():
@@ -64,34 +64,14 @@ def run():
     if not queue:
         raise Rejected("Brak nowych tematów RSS.")
     ai = Gemini(key)
-    logging.info("Wersja 2: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
+    logging.info("Wersja 2.1: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
     topics = select_topics(ai, queue, records)
     if not topics:
         raise Rejected("Brak materiałów o jednym wydarzeniu od dwóch wydawców.")
     reader = Reader()
-    chosen, docs = None, None
-    for items in topics:
-        try:
-            docs = collect(reader, items)
-            chosen = items
-            break
-        except Rejected as exc:
-            logging.warning("Temat pominięty: %s", exc)
-    if not docs or not chosen:
-        raise Rejected("Nie udało się zebrać pełnych materiałów dla wybranych tematów.")
-    logging.info("Zebrano %s materiałów od %s wydawców/instytucji.",
-                 len(docs), len({d["group"] for d in docs}))
-    dossier = ai.ask(EXTRACT, dict(documents=docs))
-    facts = check_dossier(dossier, docs)
-    draft = ai.ask(WRITE, dict(dossier=dossier), tokens=12288)
-    length, used_sources = check_draft(draft, facts, docs)
-    verification = dict(documents=docs, dossier=dossier, article=draft)
-    check_review(ai.ask(VERIFY, verification, tokens=4096))
-    if dossier["high_risk"]:
-        check_review(ai.ask(
-            VERIFY + "\nDodatkowa kontrola wysokiego ryzyka: sprawdź bezpośrednie "
-            "potwierdzenie kluczowych twierdzeń w adekwatnym dokumencie pierwotnym. "
-            "Nie publikuj porad medycznych ani inwestycyjnych.", verification, tokens=4096))
+    diagnostics = []
+    chosen, docs, dossier, facts, draft, length, used_sources = prepare_article(
+        ai, reader, topics, diagnostics)
     CONTENT.mkdir(parents=True, exist_ok=True)
     source_records = [{k: item.get(k, "") for k in ("url", "title", "source", "published")}
                       for item in chosen]
@@ -116,7 +96,7 @@ def run():
             records.append(source)
     save_json(DATA / "history.json", records)
     report("OPUBLIKOWANO", f"Utworzono artykuł: {length} słów, {len(sources)} źródeł, {ai.calls} żądania API.",
-           article=path.name, words=length, sources=len(sources), calls=ai.calls)
+           article=path.name, words=length, sources=len(sources), calls=ai.calls, attempts=diagnostics)
 
 
 def main():

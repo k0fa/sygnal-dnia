@@ -163,7 +163,7 @@ class IntegrationTests(unittest.TestCase):
                  patch.object(s, "DATA", data), patch.object(s, "CONTENT", content), \
                  patch.object(b, "CONTENT", content), patch.object(b, "OUT", root / "site"), \
                  patch.dict(os.environ, {"GEMINI_API_KEY": "mock", "GITHUB_STEP_SUMMARY": ""}), \
-                 patch.object(g, "collect", return_value=docs), \
+                 patch.object(n, "collect", return_value=docs), \
                  patch.object(n.Gemini, "ask", side_effect=[
                      {"topics": [{"ids": ["item0", "item1"]}]}, dossier, draft,
                      {"approved": True, "issues": []}]) as api:
@@ -195,6 +195,86 @@ class IntegrationTests(unittest.TestCase):
             g.check_review({"approved": True, "issues": ["Brak dowodu"]})
         with self.assertRaises(n.Rejected):
             g.check_review({"approved": False, "issues": []})
+
+
+
+class RetryTests(unittest.TestCase):
+    def client(self, responses):
+        class Fake:
+            calls = 1  # Selection already consumed one request.
+            model = "test"
+            def ask(self, *args, **kwargs):
+                if self.calls >= 5:
+                    raise AssertionError("Exceeded budget")
+                self.calls += 1
+                result = responses.pop(0)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+        return Fake()
+
+    def test_rejected_dossier_tries_next_topic(self):
+        docs, dossier, draft = fixture()
+        ai = self.client([
+            dict(ready=False, independent=False, reason="Obie relacje powielają depeszę."),
+            dossier, draft, dict(approved=True, issues=[])])
+        attempts = []
+        with patch.object(n, "collect", return_value=docs):
+            result = n.prepare_article(ai, None, [[dict(title="Pierwszy")],
+                                                   [dict(title="Drugi")]], attempts)
+        self.assertEqual(result[0][0]["title"], "Drugi")
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("powielają depeszę", attempts[0]["reason"])
+        self.assertEqual(attempts[1]["status"], "ZATWIERDZONO")
+        self.assertEqual(attempts[0]["sources"][0]["url"], docs[0]["url"])
+
+    def test_high_risk_cannot_skip_extra_review_after_retry(self):
+        docs, dossier, draft = fixture()
+        docs[0]["official"] = True
+        dossier.update(high_risk=True, official_relevant=True)
+        ai = self.client([dict(ready=False, reason="Brak faktów"), dossier])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "wysokiego ryzyka"):
+                n.prepare_article(ai, None, [[dict(title="A")], [dict(title="B")]], [])
+        self.assertEqual(ai.calls, 3)
+
+    def test_high_risk_receives_both_reviews(self):
+        docs, dossier, draft = fixture()
+        docs[0]["official"] = True
+        dossier.update(high_risk=True, official_relevant=True)
+        ai = self.client([dossier, draft, dict(approved=True, issues=[]),
+                          dict(approved=True, issues=[])])
+        with patch.object(n, "collect", return_value=docs):
+            n.prepare_article(ai, None, [[dict(title="A")]], [])
+        self.assertEqual(ai.calls, 5)
+
+    def test_review_rejection_never_returns_article(self):
+        docs, dossier, draft = fixture()
+        ai = self.client([dossier, draft, dict(approved=False, issues=["Niepoparta teza"])])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "Niepoparta teza"):
+                n.prepare_article(ai, None, [[dict(title="A")], [dict(title="B")]], [])
+        self.assertEqual(ai.calls, 4)
+
+    def test_api_failure_is_not_editorial_retry(self):
+        docs, _, _ = fixture()
+        ai = self.client([n.APIError("HTTP 429")])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaises(n.APIError):
+                n.prepare_article(ai, None, [[dict(title="A")], [dict(title="B")]], [])
+        self.assertEqual(ai.calls, 2)
+
+    def test_collection_failure_can_try_next_without_api_cost(self):
+        docs, dossier, draft = fixture()
+        ai = self.client([dossier, draft, dict(approved=True, issues=[])])
+        with patch.object(n, "collect", side_effect=[n.Rejected("Brak treści"), docs]):
+            result = n.prepare_article(ai, None, [[dict(title="A")], [dict(title="B")]], [])
+        self.assertEqual(result[0][0]["title"], "B")
+        self.assertEqual(ai.calls, 4)
+
+    def test_diagnostic_redacts_key(self):
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "secret-test"}):
+            self.assertEqual(n.diagnostic_text("Powód secret-test"), "Powód [UKRYTO]")
 
 
 if __name__ == "__main__":

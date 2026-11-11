@@ -133,7 +133,7 @@ class Reader:
         final_url, html = self.page(item["url"])
         parser = ArticleParser()
         parser.feed(html)
-        text = parser.text()[:16000]
+        text = parser.text()[:8000]
         if len(words(text)) < 250:
             raise Rejected("Dostępna treść ma mniej niż 250 słów.")
         doc = {k: item.get(k, "") for k in ("url", "title", "source", "published")}
@@ -241,7 +241,7 @@ def collect(reader, items):
     if len({d["group"] for d in docs}) < 2:
         raise Rejected("Brakuje materiałów od dwóch wydawców/instytucji.")
     if sum(len(words(d["text"])) for d in docs) < 800:
-        raise Rejected("Zebrano mniej niż 800 słów materiałów.")
+        raise Rejected("Zebrano mniej niż 800 słów materiałów; brak podstaw długiego tekstu.")
     for i, doc in enumerate(docs, 1):
         doc["id"] = f"S{i}"
     return docs
@@ -278,10 +278,8 @@ Zwróć {"ready":true,"independent":true,"high_risk":false,
 Przy sprzecznych kluczowych danych ready=false. Oceniaj rzeczywistą treść."""
 
 WRITE = """Napisz oryginalny, obiektywny artykuł po polsku z dossier.
-Dobierz długość do liczby udokumentowanych faktów: 350–1000 słów
-w akapitach. Preferuj 600–1000 słów, gdy materiały to uzasadniają.
-Nie wydłużaj tekstu powtórzeniami, ogólnikami ani informacjami z pamięci.
-Jeśli brakuje materiału na 350 rzeczowych słów, publish=false.
+Dobierz długość do faktów: 350–1000 słów w akapitach. Preferuj 600–1000, jeśli źródła to uzasadniają. Bez powtórzeń i lania wody. Jeśli brakuje
+materiału na 350 słów, publish=false. Nie dopisuj wiedzy z pamięci.
 Konkretny tytuł: kto, co zrobił; bez clickbaitu i przesądzania zarzutów.
 Wprowadzenie, 3–6 śródtytułów, wydarzenie i udokumentowany kontekst.
 Na końcu omów istotne niewiadome, bez prognoz niemających podstaw.
@@ -355,7 +353,7 @@ class Gemini:
 
 def check_dossier(dossier, docs):
     if dossier.get("ready") is not True or dossier.get("independent") is not True:
-        raise Rejected("Dossier: brak wystarczających, niezależnych dowodów.")
+        raise Rejected("Dossier: ready=" + str(dossier.get("ready")) + ", independent=" + str(dossier.get("independent")) + ". Uzasadnienie modelu: " + diagnostic_text(dossier.get("reason", "Model nie podał przyczyny.")))
     facts = dossier.get("facts")
     if not isinstance(facts, list) or not 12 <= len(facts) <= 30:
         raise Rejected("Wymagane 12–30 udokumentowanych faktów.")
@@ -452,3 +450,69 @@ def render_markdown(draft, facts):
         for paragraph in section["paragraphs"]:
             parts.append(paragraph["text"] + " " + citations(paragraph["facts"]))
     return "\n\n".join(parts) + "\n"
+
+def diagnostic_text(value, limit=900):
+    """Keep model/source text inert in logs and redact the configured key."""
+    text = normalized(value)
+    key = os.getenv("GEMINI_API_KEY", "")
+    if key:
+        text = text.replace(key, "[UKRYTO]")
+    return "".join(c for c in text if c.isprintable())[:limit]
+
+
+def review_result(review):
+    if review.get("approved") is not True or review.get("issues") != []:
+        raise Rejected("Kontrola redakcyjna: " + diagnostic_text(
+            review.get("issues", "Brak uzasadnienia modelu.")))
+
+
+def prepare_article(ai, reader, topics, diagnostics):
+    """Try another topic only if the remaining API budget permits review."""
+    for index, items in enumerate(topics, 1):
+        label = diagnostic_text(items[0].get("title", "Temat"), 160)
+        entry = dict(topic=index, title=label,
+                     sources=[dict(url=diagnostic_text(item.get("url", ""), 1000),
+                                   words="nieustalona liczba", publisher=item.get("source", ""))
+                              for item in items], status="ROZPOCZĘTO")
+        diagnostics.append(entry)
+        try:
+            # Dossier + draft + mandatory review, even for low-risk articles.
+            if 5 - ai.calls < 3:
+                raise Rejected("Pozostały limit API nie wystarcza na dossier, tekst i kontrolę.")
+            docs = collect(reader, items)
+            entry["sources"] = [
+                dict(url=diagnostic_text(d["url"], 1000),
+                     publisher=d["group"], words=len(words(d["text"])))
+                for d in docs]
+            logging.info("Temat %s: %s; źródła: %s", index, label,
+                         json.dumps(entry["sources"], ensure_ascii=False))
+            dossier = ai.ask(EXTRACT, dict(documents=docs))
+            facts = check_dossier(dossier, docs)
+            required = 3 if dossier["high_risk"] else 2
+            if 5 - ai.calls < required:
+                raise Rejected("Za mało wywołań API na tekst i wszystkie wymagane kontrole "
+                               "(w tym kontrolę wysokiego ryzyka).")
+            draft = ai.ask(WRITE, dict(dossier=dossier), tokens=12288)
+            length, used = check_draft(draft, facts, docs)
+            verification = dict(documents=docs, dossier=dossier, article=draft)
+            review_result(ai.ask(VERIFY, verification, tokens=4096))
+            if dossier["high_risk"]:
+                review_result(ai.ask(
+                    VERIFY + "\nDodatkowa kontrola wysokiego ryzyka: sprawdź bezpośrednie "
+                    "potwierdzenie kluczowych twierdzeń w adekwatnym dokumencie pierwotnym. "
+                    "Nie publikuj porad medycznych ani inwestycyjnych.",
+                    verification, tokens=4096))
+            entry.update(status="ZATWIERDZONO", reason="Kontrole zakończone.")
+            return items, docs, dossier, facts, draft, length, used
+        except Rejected as exc:
+            entry.update(status="POMINIĘTO", reason=diagnostic_text(exc))
+            logging.warning("Temat %s: %s — %s", index, label, entry["reason"])
+            if 5 - ai.calls < 3:
+                break
+    details = "\n".join(
+        f'Temat {e["topic"]}: {e["title"]}\nPowód: {e.get("reason", e["status"])}\n'
+        + "\n".join(f'Źródło: {s["url"]} ({s["words"]} słów)' for s in e["sources"])
+        for e in diagnostics)
+    raise Rejected("Nie opublikowano artykułu. Wykorzystane wywołania API: "
+                   f"{ai.calls}/5.\n" + details)
+

@@ -1,0 +1,36 @@
+Sygnał Dnia — poprawka 2.1
+
+WGRANIE
+1. Rozpakuj Sygnal_Dnia_poprawka_2_1.zip.
+2. Otwórz https://github.com/k0fa/sygnal-dnia
+3. Add file → Upload files.
+4. Wgraj trzy pliki: generator.py, newsroom.py, test_pipeline.py.
+   Wgraj je do głównego katalogu pod tymi dokładnymi nazwami.
+   Nie wgrywaj otaczającego folderu. Nie edytuj ręcznie wcięć.
+5. Commit changes.
+6. Poczekaj na zakończenie uruchomienia po zmianie kodu.
+7. Actions → Generate and publish news → Run workflow → main → Run workflow.
+   Nie używaj Re-run starego uruchomienia — korzysta z poprzedniego kodu.
+
+Nie zmieniaj klucza API, modelu ani workflow.
+Nie usuwaj folderów data, content, site ani .github.
+
+ZMIANY
+- Po odrzuceniu dossier skrypt rozważa kolejny wybrany temat, jeżeli pozostały limit
+  wystarczy na przygotowanie tekstu i wszystkie wymagane kontrole.
+- Maksymalnie 5 wywołań API i 1 artykuł w cyklu. Drugi temat nie zawsze zmieści się
+  w limicie, szczególnie gdy wymaga dodatkowej kontroli wysokiego ryzyka.
+- Błędy API kończą zadanie błędem; nie są traktowane jako redakcyjne odrzucenie.
+- Przy wstrzymaniu podsumowanie zawiera tematy, powody i adresy ocenianych źródeł.
+  Uzasadnienie pochodzi od modelu, nie stanowi niezależnego potwierdzenia.
+- Zachowano minimum dwóch grup wydawców i weryfikację dowodów oraz tekstu.
+- Zachowano wcześniej ustalone limity: 800 słów materiałów i 350–1000 słów
+  artykułu; preferowane 600–1000, jeśli źródła wystarczają.
+- Nie dodano Google Search ani nowych źródeł. Ta poprawka usuwa zatrzymanie na
+  pierwszym odrzuconym dossier, ale nie gwarantuje publikacji przy słabych materiałach.
+
+SPRAWDZENIE
+Python 3.15: 24 testy, 21 zaliczonych, 3 integracyjne pominięte z powodu brakujących
+lokalnie zależności. Zależności instaluje dotychczasowy GitHub Actions.
+Testy używają atrap API. Nie uruchamiano Gemini z Twoim kluczem.
+Sprawdzono składnię trzech plików i integralność ZIP.
