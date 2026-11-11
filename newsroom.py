@@ -240,8 +240,8 @@ def collect(reader, items):
             continue
     if len({d["group"] for d in docs}) < 2:
         raise Rejected("Brakuje materiałów od dwóch wydawców/instytucji.")
-    if sum(len(words(d["text"])) for d in docs) < 1600:
-        raise Rejected("Zebrano mniej niż 1600 słów materiałów; brak podstaw długiego tekstu.")
+    if sum(len(words(d["text"])) for d in docs) < 800:
+        raise Rejected("Zebrano mniej niż 800 słów materiałów.")
     for i, doc in enumerate(docs, 1):
         doc["id"] = f"S{i}"
     return docs
@@ -278,8 +278,10 @@ Zwróć {"ready":true,"independent":true,"high_risk":false,
 Przy sprzecznych kluczowych danych ready=false. Oceniaj rzeczywistą treść."""
 
 WRITE = """Napisz oryginalny, obiektywny artykuł po polsku z dossier.
-Cel: 600–1000 słów w akapitach. Bez powtórzeń i lania wody. Jeśli brakuje
-materiału na 600 słów, publish=false. Nie dopisuj wiedzy z pamięci.
+Dobierz długość do liczby udokumentowanych faktów: 350–1000 słów
+w akapitach. Preferuj 600–1000 słów, gdy materiały to uzasadniają.
+Nie wydłużaj tekstu powtórzeniami, ogólnikami ani informacjami z pamięci.
+Jeśli brakuje materiału na 350 rzeczowych słów, publish=false.
 Konkretny tytuł: kto, co zrobił; bez clickbaitu i przesądzania zarzutów.
 Wprowadzenie, 3–6 śródtytułów, wydarzenie i udokumentowany kontekst.
 Na końcu omów istotne niewiadome, bez prognoz niemających podstaw.
@@ -423,8 +425,8 @@ def check_draft(draft, facts, docs):
             verify_piece(paragraph.get("text"), paragraph.get("facts"), 60, 2500)
             body.append(paragraph["text"])
     length = sum(len(words(p)) for p in body)
-    if not 600 <= length <= 1000:
-        raise Rejected(f"Artykuł ma {length} słów; wymagane 600–1000.")
+    if not 350 <= length <= 1000:
+        raise Rejected(f"Artykuł ma {length} słów; wymagane 350–1000.")
     if len(set(body)) != len(body):
         raise Rejected("Powtórzone akapity.")
     source_text = " ".join(d["text"] for d in docs)
