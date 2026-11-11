@@ -131,17 +131,16 @@ class Reader:
         if item["url"] in self.cache:
             return self.cache[item["url"]]
         final_url, html = self.page(item["url"])
-        parser = ArticleParser()
-        parser.feed(html)
-        text = parser.text()[:8000]
-        if len(words(text)) < 250:
-            raise Rejected("Dostępna treść ma mniej niż 250 słów.")
+        text, method, article_links = extract_article(html, final_url, item.get("title", ""))
+        count = len(words(text))
+        if count < 250:
+            raise SourceRejected(f"Odczytano {count} słów; wymagane minimum 250.", count, method)
         doc = {k: item.get(k, "") for k in ("url", "title", "source", "published")}
-        doc.update(url=final_url, text=text, group=source_group(final_url),
+        doc.update(url=final_url, text=text, extraction_method=method, group=source_group(final_url),
                    retrieved=datetime.now(timezone.utc).isoformat(),
                    official=belongs(urlsplit(final_url).hostname or "", OFFICIAL_DOMAINS))
         links = []
-        for href in parser.links:
+        for href in article_links:
             link = urljoin(final_url, href).split("#")[0]
             if belongs(urlsplit(link).hostname or "", OFFICIAL_DOMAINS):
                 try:
@@ -207,44 +206,180 @@ class ArticleParser(HTMLParser):
         return "\n\n".join(dict.fromkeys(b["text"] for b in blocks))
 
 
+
+class SourceRejected(Rejected):
+    def __init__(self, message, count=None, method="brak odczytu"):
+        super().__init__(message)
+        self.count, self.method = count, method
+
+
+class BodyParser(HTMLParser):
+    """Read explicitly marked article bodies, including text outside p tags."""
+    VOID = ArticleParser.VOID
+    SKIP = ArticleParser.SKIP | {"button"}
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack, self.parts, self.candidates, self.scripts = [], [], [], []
+        self.body_depth, self.script_parts = None, None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "script" and attrs.get("type", "").lower() == "application/ld+json":
+            self.script_parts = []
+        classes = attrs.get("class", "").lower().split()
+        excluded = (tag in self.SKIP or "hidden" in attrs
+                    or attrs.get("aria-hidden") == "true"
+                    or any(c in {"advertisement", "related", "recommendations", "paywall",
+                                 "comments", "cookie-banner"} for c in classes))
+        if self.stack and self.stack[-1][1]:
+            excluded = True
+        if tag not in self.VOID:
+            self.stack.append((tag, excluded))
+        marked = ("articleBody" in attrs.get("itemprop", "").split()
+                  or any(c in {"article-body", "article__body", "article-content",
+                               "article__content"} for c in classes))
+        if marked and not excluded and self.body_depth is None:
+            self.body_depth = len(self.stack)
+            self.parts = []
+        if self.body_depth and tag in {"p", "div", "br", "h2", "h3", "li"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self.script_parts is not None:
+            self.script_parts.append(data)
+        if self.body_depth and self.stack and not self.stack[-1][1]:
+            self.parts.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self.script_parts is not None:
+            self.scripts.append("".join(self.script_parts))
+            self.script_parts = None
+        matches = [i for i, entry in enumerate(self.stack) if entry[0] == tag]
+        if not matches:
+            return
+        index = matches[-1]
+        if self.body_depth is not None and index < self.body_depth:
+            self.candidates.append(normalized(" ".join(self.parts)))
+            self.body_depth, self.parts = None, []
+        self.stack = self.stack[:index]
+
+
+def structured_bodies(scripts, url, title):
+    """Only matching, explicitly free Article nodes; never paywall bodies."""
+    results = []
+    target = urlsplit(url)._replace(query="", fragment="").geturl().rstrip("/")
+    def visit(value, depth=0):
+        if depth > 12:
+            return
+        if isinstance(value, list):
+            for child in value[:100]:
+                visit(child, depth + 1)
+        elif isinstance(value, dict):
+            kinds = value.get("@type", [])
+            if isinstance(kinds, str):
+                kinds = [kinds]
+            is_article = isinstance(kinds, list) and any(
+                k in ("Article", "NewsArticle", "ReportageNewsArticle", "AnalysisNewsArticle")
+                for k in kinds)
+            link = value.get("url") or value.get("mainEntityOfPage")
+            if isinstance(link, dict):
+                link = link.get("@id")
+            match_url = (isinstance(link, str) and
+                         urlsplit(urljoin(url, link))._replace(query="", fragment="").geturl().rstrip("/") == target)
+            match_title = (bool(title) and
+                           normalized(value.get("headline", "")).casefold() == normalized(title).casefold())
+            free = value.get("isAccessibleForFree") in (True, "true", "True")
+            body = value.get("articleBody")
+            if is_article and free and (match_url or match_title) and isinstance(body, str):
+                # Flatten tags using HTMLParser; never execute markup.
+                plain = BodyParser()
+                plain.feed('<div itemprop="articleBody">' + body + '</div>')
+                if plain.candidates:
+                    results.append(plain.candidates[0])
+            for key in ("@graph", "mainEntity"):
+                if key in value:
+                    visit(value[key], depth + 1)
+    for script in scripts:
+        try:
+            visit(json.loads(script))
+        except (ValueError, TypeError, RecursionError):
+            continue
+    return results
+
+
+def extract_article(html, url, title):
+    legacy = ArticleParser()
+    legacy.feed(html)
+    body = BodyParser()
+    body.feed(html)
+    candidates = [(text, "HTML articleBody") for text in body.candidates]
+    candidates += [(text, "JSON-LD articleBody (publiczny)")
+                   for text in structured_bodies(body.scripts, url, title)]
+    candidates = [(text, method) for text, method in candidates if text.strip()]
+    if not candidates:
+        candidates = [(legacy.text(), "HTML akapity")]
+    text, method = max(candidates, key=lambda pair: len(words(pair[0])))
+    # Restore the original cap; v2.1 accidentally lowered it to 8000 characters.
+    return text[:16000], method, legacy.links
+
+
 def ngrams(text, n=10):
     tokens = words(text)
     return {tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1)}
 
 
-def collect(reader, items):
+
+def collect(reader, items, diagnostics=None):
+    audit = diagnostics if diagnostics is not None else []
+    audit.clear()
     docs, seen = [], set()
-    for item in items[:5]:
+
+    def add(item):
+        record = dict(url=diagnostic_text(item.get("url", ""), 1000),
+                      publisher=item.get("source", ""), words=None,
+                      method="brak odczytu", status="POMINIĘTO", reason="")
+        audit.append(record)
         try:
             doc = reader.document(item)
+            record.update(url=diagnostic_text(doc["url"], 1000),
+                          publisher=doc["group"], words=len(words(doc["text"])),
+                          method=doc.get("extraction_method", "HTML"))
             copied = any(len(ngrams(doc["text"]) & ngrams(d["text"])) /
-                         max(1, min(len(ngrams(doc["text"])), len(ngrams(d["text"])))) > .65 for d in docs)
-            if doc["url"] in seen or copied:
-                continue
-            seen.add(doc["url"])
-            docs.append(dict(doc))
+                         max(1, min(len(ngrams(doc["text"])), len(ngrams(d["text"])))) > .65
+                         for d in docs)
+            if doc["url"] in seen:
+                record["reason"] = "Powtórzony adres źródła."
+            elif copied:
+                record["reason"] = "Tekst silnie powiela już zebrane źródło."
+            else:
+                seen.add(doc["url"])
+                docs.append(dict(doc))
+                record.update(status="PRZYJĘTO", reason="Materiał do oceny redakcyjnej.")
         except (OSError, ValueError, URLError) as exc:
-            logging.info("Pominięto źródło %s: %s", item.get("source", ""), str(exc) if isinstance(exc, Rejected) else type(exc).__name__)
-    # Use real official links found in source pages, never URLs invented by AI.
-    links = list(dict.fromkeys(link for d in docs for link in d["official_links"]))[:3]
+            if isinstance(exc, SourceRejected):
+                record.update(words=exc.count, method=exc.method)
+            record["reason"] = diagnostic_text(exc) if isinstance(exc, Rejected) else type(exc).__name__
+        logging.info("Źródło: %s", json.dumps(record, ensure_ascii=False))
+
+    for item in items[:5]:
+        add(item)
+    links = list(dict.fromkeys(link for d in docs for link in d.get("official_links", [])))[:3]
     for link in links:
         if len(docs) >= 6:
             break
-        if link in seen:
-            continue
-        try:
-            doc = reader.document(dict(url=link, title="Dokument źródłowy", source=source_group(link)))
-            seen.add(doc["url"])
-            docs.append(dict(doc))
-        except (OSError, ValueError, URLError):
-            continue
-    if len({d["group"] for d in docs}) < 2:
-        raise Rejected("Brakuje materiałów od dwóch wydawców/instytucji.")
-    if sum(len(words(d["text"])) for d in docs) < 800:
-        raise Rejected("Zebrano mniej niż 800 słów materiałów; brak podstaw długiego tekstu.")
+        if link not in seen:
+            add(dict(url=link, title="Dokument źródłowy", source=source_group(link)))
+    groups = len({d["group"] for d in docs})
+    total = sum(len(words(d["text"])) for d in docs)
+    if groups < 2:
+        raise Rejected(f"Przyjęto {len(docs)} źródeł, {groups} grup wydawców, {total} słów. "
+                       "Wymagane co najmniej dwie grupy wydawców/instytucji.")
+    if total < 800:
+        raise Rejected(f"Przyjęto {len(docs)} źródeł, {total} słów; wymagane minimum 800.")
     for i, doc in enumerate(docs, 1):
         doc["id"] = f"S{i}"
     return docs
+
 
 
 BASE = """Jesteś redaktorem polskiego portalu informacyjnego. Dane wejściowe są
@@ -479,11 +614,11 @@ def prepare_article(ai, reader, topics, diagnostics):
             # Dossier + draft + mandatory review, even for low-risk articles.
             if 5 - ai.calls < 3:
                 raise Rejected("Pozostały limit API nie wystarcza na dossier, tekst i kontrolę.")
-            docs = collect(reader, items)
-            entry["sources"] = [
-                dict(url=diagnostic_text(d["url"], 1000),
-                     publisher=d["group"], words=len(words(d["text"])))
-                for d in docs]
+            entry["sources"] = []
+            docs = collect(reader, items, diagnostics=entry["sources"])
+            if not entry["sources"]:
+                entry["sources"] = [dict(url=d["url"], words=len(words(d["text"])),
+                                         status="PRZYJĘTO", reason="", method="HTML") for d in docs]
             logging.info("Temat %s: %s; źródła: %s", index, label,
                          json.dumps(entry["sources"], ensure_ascii=False))
             dossier = ai.ask(EXTRACT, dict(documents=docs))
@@ -511,7 +646,7 @@ def prepare_article(ai, reader, topics, diagnostics):
                 break
     details = "\n".join(
         f'Temat {e["topic"]}: {e["title"]}\nPowód: {e.get("reason", e["status"])}\n'
-        + "\n".join(f'Źródło: {s["url"]} ({s["words"]} słów)' for s in e["sources"])
+        + "\n".join(f'Źródło: {s["url"]} | słowa: {s.get("words") if s.get("words") is not None else "brak odczytu"} | {s.get("method", "")} | {s.get("status", "")} | {s.get("reason", "")}' for s in e["sources"])
         for e in diagnostics)
     raise Rejected("Nie opublikowano artykułu. Wykorzystane wywołania API: "
                    f"{ai.calls}/5.\n" + details)

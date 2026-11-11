@@ -1,36 +1,33 @@
-Sygnał Dnia — poprawka 2.1
+Sygnał Dnia — poprawka 2.2 (na wersję 2.1)
+1. Rozpakuj ZIP.
+2. Repozytorium https://github.com/k0fa/sygnal-dnia → Add file → Upload files.
+3. Wgraj newsroom.py oraz test_pipeline.py do katalogu głównego, zastępując pliki.
+4. Commit changes. Poczekaj na zakończenie automatycznego uruchomienia.
+5. Actions → Generate and publish news → Run workflow → main → Run workflow.
+Nie zmieniaj generator.py z wersji 2.1, klucza, modelu ani workflow.
 
-WGRANIE
-1. Rozpakuj Sygnal_Dnia_poprawka_2_1.zip.
-2. Otwórz https://github.com/k0fa/sygnal-dnia
-3. Add file → Upload files.
-4. Wgraj trzy pliki: generator.py, newsroom.py, test_pipeline.py.
-   Wgraj je do głównego katalogu pod tymi dokładnymi nazwami.
-   Nie wgrywaj otaczającego folderu. Nie edytuj ręcznie wcięć.
-5. Commit changes.
-6. Poczekaj na zakończenie uruchomienia po zmianie kodu.
-7. Actions → Generate and publish news → Run workflow → main → Run workflow.
-   Nie używaj Re-run starego uruchomienia — korzysta z poprzedniego kodu.
+Co poprawiono:
+- Odczyt tekstu z oznaczonych articleBody / article-body / article-content,
+  także jeśli treść nie jest umieszczona w elementach p.
+- Odczyt pasującego do adresu lub tytułu Article/NewsArticle z JSON-LD,
+  tylko przy isAccessibleForFree=true. Nie pobiera płatnych treści z tej ścieżki.
+- Przywrócono limit 16000 znaków na źródło; poprzednia poprawka przypadkowo
+  zmniejszyła go do 8000 znaków.
+- Każda próba pobrania ma wynik: adres, liczba słów (albo brak odczytu),
+  metoda, przyjęto/pominięto i powód. Wyniki pozostają w podsumowaniu także
+  po odrzuceniu całego tematu. Powielone źródła mają osobny powód pominięcia.
+- Temat odrzucony przez próg 800 słów podaje rzeczywistą sumę przyjętych treści.
+- Bez obniżania progów: 250 słów na źródło, 800 łącznie, dwie grupy wydawców,
+  350–1000 słów artykułu. Pozostają weryfikacja faktów i limit 5 wywołań API.
 
-Nie zmieniaj klucza API, modelu ani workflow.
-Nie usuwaj folderów data, content, site ani .github.
+Ograniczenia:
+Dwie krótkie relacje nadal mogą nie spełnić wymagań; poprawka nie gwarantuje
+artykułu w każdym cyklu. Nie dodano nowych źródeł ani płatnego wyszukiwania.
+Metoda ekstrakcji nie dowodzi kompletności strony. Blokady, robots.txt i błędy HTTP
+są respektowane i raportowane. Nie wykonano rzeczywistej generacji kluczem użytkownika.
+Próba pobrania przykładowego adresu WP w tym środowisku zwróciła HTTP 404,
+więc nie potwierdzono działania na tym konkretnym artykule.
 
-ZMIANY
-- Po odrzuceniu dossier skrypt rozważa kolejny wybrany temat, jeżeli pozostały limit
-  wystarczy na przygotowanie tekstu i wszystkie wymagane kontrole.
-- Maksymalnie 5 wywołań API i 1 artykuł w cyklu. Drugi temat nie zawsze zmieści się
-  w limicie, szczególnie gdy wymaga dodatkowej kontroli wysokiego ryzyka.
-- Błędy API kończą zadanie błędem; nie są traktowane jako redakcyjne odrzucenie.
-- Przy wstrzymaniu podsumowanie zawiera tematy, powody i adresy ocenianych źródeł.
-  Uzasadnienie pochodzi od modelu, nie stanowi niezależnego potwierdzenia.
-- Zachowano minimum dwóch grup wydawców i weryfikację dowodów oraz tekstu.
-- Zachowano wcześniej ustalone limity: 800 słów materiałów i 350–1000 słów
-  artykułu; preferowane 600–1000, jeśli źródła wystarczają.
-- Nie dodano Google Search ani nowych źródeł. Ta poprawka usuwa zatrzymanie na
-  pierwszym odrzuconym dossier, ale nie gwarantuje publikacji przy słabych materiałach.
-
-SPRAWDZENIE
-Python 3.15: 24 testy, 21 zaliczonych, 3 integracyjne pominięte z powodu brakujących
-lokalnie zależności. Zależności instaluje dotychczasowy GitHub Actions.
-Testy używają atrap API. Nie uruchamiano Gemini z Twoim kluczem.
-Sprawdzono składnię trzech plików i integralność ZIP.
+Walidacja:
+Testy lokalne Python 3.15; wyniki przekazane w odpowiedzi. Testy integracyjne
+wymagają bibliotek instalowanych przez istniejący GitHub Actions.

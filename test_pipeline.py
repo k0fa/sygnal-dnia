@@ -277,5 +277,81 @@ class RetryTests(unittest.TestCase):
             self.assertEqual(n.diagnostic_text("Powód secret-test"), "Powód [UKRYTO]")
 
 
+
+class ExtractionTests(unittest.TestCase):
+    def test_div_body_without_paragraphs(self):
+        text, method, _ = n.extract_article(
+            '<nav><p>' + 'MENU ' * 400 + '</p></nav>'
+            '<div itemprop="articleBody"><div>' + 'Fakty wydarzenia. ' * 160 +
+            '</div><aside>REKLAMA</aside></div>', "https://onet.pl/a", "Tytuł")
+        self.assertEqual(len(n.words(text)), 320)
+        self.assertNotIn("MENU", text)
+        self.assertNotIn("REKLAMA", text)
+        self.assertEqual(method, "HTML articleBody")
+
+    def test_matching_free_jsonld(self):
+        body = "Pełna publiczna treść artykułu. " * 100
+        data = {"@graph": [{"@type": "NewsArticle", "url": "https://onet.pl/a",
+                "isAccessibleForFree": True, "articleBody": body}]}
+        text, method, _ = n.extract_article(
+            '<script type="application/ld+json">' + json.dumps(data) + '</script>',
+            "https://onet.pl/a", "")
+        self.assertEqual(len(n.words(text)), 400)
+        self.assertIn("JSON-LD", method)
+
+    def test_paid_and_unrelated_jsonld_not_used(self):
+        for free, url in [(False, "https://onet.pl/a"), (True, "https://onet.pl/b")]:
+            data = {"@type": "NewsArticle", "url": url,
+                    "isAccessibleForFree": free, "articleBody": "UKRYTE " * 400}
+            text, _, _ = n.extract_article(
+                '<p>' + 'Dostępna zajawka. ' * 10 + '</p>'
+                '<script type="application/ld+json">' + json.dumps(data) + '</script>',
+                "https://onet.pl/a", "")
+            self.assertNotIn("UKRYTE", text)
+
+    def test_short_source_retains_count(self):
+        reader = n.Reader()
+        with patch.object(reader, "page", return_value=(
+                "https://onet.pl/a", '<div itemprop="articleBody">' + 'słowo ' * 120 + '</div>')):
+            with self.assertRaises(n.SourceRejected) as error:
+                reader.document(dict(url="https://onet.pl/a"))
+        self.assertEqual(error.exception.count, 120)
+
+    def test_collection_failure_preserves_all_source_diagnostics(self):
+        reader = MagicMock()
+        reader.document.side_effect = [
+            n.SourceRejected("Za krótki", 120, "HTML articleBody"),
+            n.Rejected("Źródło zwróciło HTTP 403.")]
+        audit = []
+        with self.assertRaises(n.Rejected):
+            n.collect(reader, [dict(url="https://onet.pl/a"), dict(url="https://wp.pl/b")], audit)
+        self.assertEqual(audit[0]["words"], 120)
+        self.assertEqual(audit[1]["words"], None)
+        self.assertIn("403", audit[1]["reason"])
+
+    def test_less_than_800_reports_real_total(self):
+        def document(item):
+            prefix = "alpha" if "onet" in item["url"] else "beta"
+            return dict(url=item["url"], group=n.source_group(item["url"]),
+                        text=" ".join(prefix + str(i) for i in range(300)),
+                        official_links=[])
+        reader = MagicMock()
+        reader.document.side_effect = document
+        audit = []
+        with self.assertRaisesRegex(n.Rejected, "600 słów"):
+            n.collect(reader, [dict(url="https://onet.pl/a"), dict(url="https://wp.pl/b")], audit)
+        self.assertEqual([a["words"] for a in audit], [300, 300])
+        self.assertTrue(all(a["status"] == "PRZYJĘTO" for a in audit))
+
+    def test_original_16000_character_limit_restored(self):
+        body = " ".join("wyraz" + str(i) for i in range(1400))
+        reader = n.Reader()
+        with patch.object(reader, "page", return_value=(
+                "https://onet.pl/a", '<div itemprop="articleBody">' + body + '</div>')):
+            doc = reader.document(dict(url="https://onet.pl/a"))
+        self.assertGreater(len(doc["text"]), 8000)
+        self.assertLessEqual(len(doc["text"]), 16000)
+
+
 if __name__ == "__main__":
     unittest.main()
