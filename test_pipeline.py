@@ -1,70 +1,199 @@
+"""Offline regression tests. Integration tests require requirements.txt."""
+import copy
+import importlib.util
+import io
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from urllib.error import HTTPError
 
-import build
-import generator
-import scraper
+import newsroom as n
+
+DEPS = all(importlib.util.find_spec(m) for m in ("yaml", "requests", "feedparser", "bs4", "markdown", "bleach"))
 
 
-class PipelineTests(unittest.TestCase):
-    def test_pipeline_recovery_and_html(self):
+def fixture():
+    docs = [
+        dict(id="S1", url="https://wiadomosci.onet.pl/test", group="onet.pl", official=False,
+             title="Pierwsze źródło", source="Onet", published="2026-11-10T10:00:00+00:00",
+             text="Dokument źródłowy opisuje przebieg prac oraz potwierdzone wyniki spotkania."),
+        dict(id="S2", url="https://wiadomosci.wp.pl/test", group="wp.pl", official=False,
+             title="Drugie źródło", source="WP", published="2026-11-10T10:00:00+00:00",
+             text="Druga relacja przedstawia szczegóły wydarzenia i ograniczenia dostępnych danych.")]
+    facts = [dict(id=f"F{i+1}", claim=f"Fakt testowy numer {i+1}",
+                  evidence=[dict(source=docs[i % 2]["id"], quote=docs[i % 2]["text"])])
+             for i in range(12)]
+    dossier = dict(ready=True, independent=True, high_risk=False, official_relevant=False, facts=facts)
+    sections = []
+    for j in range(3):
+        paragraphs = []
+        for k in range(3):
+            # Synthetic text tests structure and limits, never published.
+            prefix = ["Pierwszy", "Drugi", "Trzeci"][j] + " " + ["początek", "środek", "koniec"][k]
+            paragraphs.append(dict(text=prefix + " " + " ".join(["analiza"]*70),
+                                   facts=["F1", "F2"]))
+        sections.append(dict(heading="Opis wydarzenia", facts=["F1"], paragraphs=paragraphs))
+    draft = dict(publish=True, title="Testowy artykuł opisujący wydarzenie",
+                 title_facts=["F1"], summary="Podsumowanie testowego wydarzenia z odwołaniem do obu dostępnych relacji.",
+                 summary_facts=["F1", "F2"], sections=sections)
+    return docs, dossier, draft
+
+
+class EditorialTests(unittest.TestCase):
+    def test_full_structural_acceptance_and_citations(self):
+        docs, dossier, draft = fixture()
+        facts = n.check_dossier(dossier, docs)
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertEqual(length, 648)
+        self.assertEqual(sources, {"S1", "S2"})
+        text = n.render_markdown(draft, facts)
+        self.assertIn("[S2](#source-S2)", text)
+
+    def test_fabricated_evidence_is_rejected(self):
+        docs, dossier, _ = fixture()
+        dossier["facts"][0]["evidence"][0]["quote"] = "Ten nieistniejący fragment model wymyślił bez podstaw."
+        with self.assertRaisesRegex(n.Rejected, "nie istnieje"):
+            n.check_dossier(dossier, docs)
+
+    def test_high_risk_requires_primary_evidence(self):
+        docs, dossier, _ = fixture()
+        dossier.update(high_risk=True, official_relevant=True)
+        with self.assertRaises(n.Rejected):
+            n.check_dossier(dossier, docs)
+
+    def test_same_publisher_is_not_two_sources(self):
+        docs, dossier, _ = fixture()
+        docs[1]["group"] = docs[0]["group"]
+        with self.assertRaises(n.Rejected):
+            n.check_dossier(dossier, docs)
+        self.assertEqual(n.source_group("https://geekweek.interia.pl/a"),
+                         n.source_group("https://biznes.interia.pl/b"))
+
+    def test_unknown_fact_reference_is_rejected(self):
+        docs, dossier, draft = fixture()
+        draft["sections"][0]["paragraphs"][0]["facts"] = ["F999"]
+        with self.assertRaises(n.Rejected):
+            n.check_draft(draft, n.check_dossier(dossier, docs), docs)
+
+    def test_invented_number_is_rejected(self):
+        docs, dossier, draft = fixture()
+        draft["title"] += " 99999"
+        with self.assertRaisesRegex(n.Rejected, "Liczba"):
+            n.check_draft(draft, n.check_dossier(dossier, docs), docs)
+
+    def test_short_article_is_rejected(self):
+        docs, dossier, draft = fixture()
+        draft["sections"][0]["paragraphs"] = draft["sections"][0]["paragraphs"][:1]
+        with self.assertRaisesRegex(n.Rejected, "słów"):
+            n.check_draft(draft, n.check_dossier(dossier, docs), docs)
+
+    def test_source_copy_is_rejected(self):
+        docs, dossier, draft = fixture()
+        quote = "Jeden bardzo długi fragment pochodzący ze źródła nie powinien zostać skopiowany bezpośrednio do publikacji."
+        docs[0]["text"] += " " + quote
+        draft["sections"][0]["paragraphs"][0]["text"] += " " + quote
+        with self.assertRaisesRegex(n.Rejected, "sekwencję"):
+            n.check_draft(draft, n.check_dossier(dossier, docs), docs)
+
+    def test_untrusted_html_is_rejected(self):
+        docs, dossier, draft = fixture()
+        draft["title"] += "<script>"
+        with self.assertRaises(n.Rejected):
+            n.check_draft(draft, n.check_dossier(dossier, docs), docs)
+
+    def test_article_extractor_excludes_navigation(self):
+        parser = n.ArticleParser()
+        paragraph = "Treść prawdziwego artykułu zawiera szczegóły opisywanego wydarzenia. " * 40
+        parser.feed("<nav><p>" + "Nawigacja " * 70 + "</p></nav><article><p>" +
+                    paragraph + "</p><script>złośliwy kod</script></article>")
+        self.assertNotIn("Nawigacja", parser.text())
+        self.assertNotIn("złośliwy", parser.text())
+        self.assertIn("prawdziwego", parser.text())
+
+    def test_urls_and_private_addresses(self):
+        for url in ("http://onet.pl/a", "https://onet.pl.evil.com/a", "https://localhost/a",
+                    "https://user:pass@onet.pl/a", "https://onet.pl:8080/a"):
+            with self.assertRaises(n.Rejected):
+                n.checked_url(url, dns=False)
+        with patch.object(n.socket, "getaddrinfo", return_value=[(2, 1, 6, "", ("127.0.0.1", 443))]):
+            with self.assertRaises(n.Rejected):
+                n.checked_url("https://onet.pl/a")
+
+    def test_api_errors_do_not_expose_key(self):
+        client = n.Gemini("SECRET_TEST_KEY")
+        client.opener.open = MagicMock(side_effect=HTTPError("test", 404, "missing", {}, io.BytesIO()))
+        with self.assertRaises(n.APIError) as context:
+            client.ask("test", {})
+        self.assertIn("GEMINI_MODEL", str(context.exception))
+        self.assertNotIn("SECRET_TEST_KEY", str(context.exception))
+
+    def test_no_api_call_after_limit(self):
+        client = n.Gemini("unused")
+        client.calls = 5
+        client.opener.open = MagicMock()
+        with self.assertRaises(n.APIError):
+            client.ask("test", {})
+        client.opener.open.assert_not_called()
+
+    def test_robots_disallow(self):
+        reader = n.Reader()
+        reader.raw = MagicMock(return_value=("User-agent: *\nDisallow: /\n", "text/plain"))
+        self.assertFalse(reader.allowed("https://onet.pl/a"))
+
+
+@unittest.skipUnless(DEPS, "Integration requires requirements.txt")
+class IntegrationTests(unittest.TestCase):
+    def test_publish_history_and_build(self):
+        import generator as g
+        import scraper as s
+        import build as b
+        docs, dossier, draft = fixture()
+        items = [dict(id=f"item{i}", title=d["title"], summary=d["text"], url=d["url"],
+                      source=d["source"], published=d["published"], category="Wiadomości")
+                 for i, d in enumerate(docs)]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data, content = root / "data", root / "content"
-            data.mkdir()
-            content.mkdir()
-            item = dict(id="abc123", url="https://example.org/news", title="Testowy komunikat o rozwoju kolei",
-                        summary="Opis materiału wejściowego zawiera informacje o rozbudowie linii kolejowej.",
-                        source="Test RSS", published="2026-11-10T10:00:00+00:00", category="Wiadomości")
-            result = dict(publish=True, title='Nowa informacja: kolej <img src=x onerror=alert(1)>',
-                          summary="Podsumowanie testowego materiału opracowanego na podstawie danych.",
-                          body="Treść testowa do sprawdzenia działania całego procesu publikacji. " * 4 + '<script>alert(1)</script>')
-            scraper.save_json(data / "queue.json", [item])
-            with patch.object(scraper, "DATA", data), patch.object(scraper, "CONTENT", content), \
-                 patch.object(generator, "DATA", data), patch.object(generator, "CONTENT", content), \
-                 patch.object(build, "CONTENT", content), patch.object(build, "OUT", root / "site"), \
-                 patch.dict(os.environ, {"GEMINI_API_KEY": "mock", "MAX_ARTICLES": "2"}), \
-                 patch.object(generator, "generate", return_value=result) as api:
-                generator.main()
+            s.save_json(data / "queue.json", items)
+            with patch.object(g, "DATA", data), patch.object(g, "CONTENT", content), \
+                 patch.object(s, "DATA", data), patch.object(s, "CONTENT", content), \
+                 patch.object(b, "CONTENT", content), patch.object(b, "OUT", root / "site"), \
+                 patch.dict(os.environ, {"GEMINI_API_KEY": "mock", "GITHUB_STEP_SUMMARY": ""}), \
+                 patch.object(g, "collect", return_value=docs), \
+                 patch.object(n.Gemini, "ask", side_effect=[
+                     {"topics": [{"ids": ["item0", "item1"]}]}, dossier, draft,
+                     {"approved": True, "issues": []}]) as api:
+                g.main()
                 self.assertEqual(len(list(content.glob("*.md"))), 1)
-                # Simulate loss of history after Markdown was written.
+                self.assertEqual(api.call_count, 4)
                 (data / "history.json").unlink()
-                generator.main()
-                self.assertEqual(api.call_count, 1)
-                build.main()
-                rendered = (root / "site/articles/abc123.html").read_text(encoding="utf-8")
-                self.assertNotIn("<img", rendered)
-                self.assertNotIn("<script>alert", rendered)
-                self.assertIn('../index.html', rendered)
-                self.assertIn('https://example.org/news', rendered)
+                recovered = s.history()
+                self.assertEqual(len(recovered), 2)
+                g.main()
+                self.assertEqual(api.call_count, 4)
+                b.main()
+                article = next((root / "site/articles").glob("*.html")).read_text(encoding="utf-8")
+                self.assertIn('href="#source-S2"', article)
+                self.assertIn('id="source-S2"', article)
+                self.assertIn(docs[1]["url"], article)
 
-    def test_dedup_and_copy_detection(self):
-        url = scraper.canonical("https://example.org/a?id=3&utm_source=rss#x")
-        self.assertEqual(url, "https://example.org/a?id=3")
-        self.assertTrue(scraper.duplicate(dict(url=url, title="Rząd ogłosił ważne zmiany"),
-                                         [dict(url="https://other.org/a", title="Rząd ogłosił ważne zmiany!")]))
-        result = dict(publish=True, title="Wiadomość o zmianach gospodarczych",
-                      summary="Bardzo długie podsumowanie wydarzenia gospodarczego.",
-                      body="To jest dokładnie ten sam długi fragment tekstu źródłowego. " * 5)
-        with self.assertRaises(ValueError):
-            generator.validate(result, dict(title="Nagłówek", summary=result["body"]))
+    def test_api_failure_marks_run_failed(self):
+        import generator as g
+        with patch.object(g, "run", side_effect=n.APIError("HTTP 429")), patch.object(g, "report") as report:
+            with self.assertRaises(SystemExit) as exit:
+                g.main()
+            self.assertEqual(exit.exception.code, 1)
+            self.assertEqual(report.call_args.args[0], "BŁĄD API")
 
-    def test_quota_does_not_publish(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp) / "data"
-            content = Path(tmp) / "content"
-            scraper.save_json(data / "queue.json", [dict(id="x", title="Test", url="https://example.org")])
-            with patch.object(generator, "DATA", data), patch.object(generator, "CONTENT", content), \
-                 patch.object(generator, "history", return_value=[]), \
-                 patch.dict(os.environ, {"GEMINI_API_KEY": "mock"}), \
-                 patch.object(generator, "generate", side_effect=generator.StopAPI("HTTP 429")):
-                generator.main()
-                self.assertEqual(list(content.glob("*.md")), [])
-                self.assertFalse((data / "history.json").exists())
+    def test_review_rejection_does_not_publish(self):
+        import generator as g
+        with self.assertRaises(n.Rejected):
+            g.check_review({"approved": True, "issues": ["Brak dowodu"]})
+        with self.assertRaises(n.Rejected):
+            g.check_review({"approved": False, "issues": []})
 
 
 if __name__ == "__main__":

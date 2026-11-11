@@ -81,9 +81,9 @@ def history():
     # Recover a publication if a process stopped after writing Markdown.
     for article in CONTENT.glob("*.md"):
         meta, _ = read_article(article)
-        record = meta["source"]
-        if not any(r["url"] == record["url"] for r in records):
-            records.append(record)
+        for record in meta.get("dedup_sources", [meta["source"]]):
+            if not any(r["url"] == record["url"] for r in records):
+                records.append(record)
     return records
 
 
@@ -114,8 +114,8 @@ def fetch():
                     if published < now - timedelta(hours=48) or published > now + timedelta(hours=1):
                         continue
                     title = plain(entry.get("title", ""))[:300]
-                    summary = plain(entry.get("summary", ""))[:5000]
-                    if len(title) < 15 or len(summary) < 180:
+                    summary = plain(entry.get("summary", ""))[:800]
+                    if len(title) < 15 or len(summary) < 40:
                         continue
                     link = canonical(entry.get("link", ""))
                     item = dict(id=hashlib.sha256(link.encode()).hexdigest()[:24],
@@ -130,12 +130,14 @@ def fetch():
         except (requests.RequestException, ValueError):
             logging.warning("Unavailable feed: %s", source)
     selected = []
+    per_feed = {}
     for item in sorted(candidates, key=lambda x: (-x["score"], x["id"])):
-        if not duplicate(item, selected):
+        if not any(i["url"] == item["url"] for i in selected) and per_feed.get(item["source"], 0) < 15:
             selected.append(item)
-    save_json(DATA / "queue.json", selected[:20])
+            per_feed[item["source"]] = per_feed.get(item["source"], 0) + 1
+    save_json(DATA / "queue.json", selected[:75])
     save_json(DATA / "history.json", old)
-    logging.info("Healthy feeds: %s/%s; queued: %s", healthy, len(FEEDS), min(20, len(selected)))
+    logging.info("Healthy feeds: %s/%s; queued: %s", healthy, len(FEEDS), min(75, len(selected)))
     if not healthy:
         raise SystemExit("All RSS feeds failed; existing publications are preserved.")
 

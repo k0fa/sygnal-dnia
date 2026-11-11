@@ -36,8 +36,8 @@ a{{color:inherit}}.article p{{margin:1em 0}}.article h2{{font-size:1.5em;font-we
 <a class="font-black text-3xl tracking-tight no-underline" href="{home}">{NAME}<span class="text-red-600">.</span></a>
 <span class="text-base text-slate-600">Polska · Świat · Technologia</span></header>
 <main>{body}</main><footer class="border-t text-base text-slate-600">
-Materiały opracowuje AI na podstawie opisów RSS. Nie są niezależną weryfikacją informacji.
-Źródło i data oryginalnej publikacji znajdują się przy każdym artykule.</footer></body></html>'''
+Materiały opracowuje AI na podstawie wskazanych źródeł. Automatyczna kontrola nie zastępuje redakcji człowieka.
+Źródła i daty ich publikacji znajdują się przy artykułach.</footer></body></html>'''
 
 
 def main():
@@ -54,7 +54,7 @@ def main():
     items.sort(key=lambda x: datetime.fromisoformat(x[0]["date"]), reverse=True)
     categories = sorted({m["category"] for m, _ in items})
     nav = " ".join(f'<a class="rounded-full border px-4 py-2" href="#{category_id(c)}">{esc(c)}</a>' for c in categories)
-    index = f'<h1 class="text-4xl font-black my-6">Wiadomości w skrócie</h1><nav class="flex flex-wrap gap-3 mb-10" aria-label="Kategorie">{nav}</nav>'
+    index = f'<h1 class="text-4xl font-black my-6">Wiadomości i wyjaśnienia</h1><nav class="flex flex-wrap gap-3 mb-10" aria-label="Kategorie">{nav}</nav>'
     if not items:
         index += '<p>Pierwsze wiadomości pojawią się po udanej generacji.</p>'
     for category in categories:
@@ -69,19 +69,24 @@ def main():
         index += '</div></section>'
     (OUT / "index.html").write_text(page("Aktualności", "Przegląd wiadomości z podaniem źródeł.", index), encoding="utf-8")
     for meta, body in items:
-        safe_body = bleach.clean(markdown.markdown(body), tags=["p", "h2", "h3", "strong", "em", "ul", "ol", "li", "blockquote", "br"], attributes={}, strip=True)
+        safe_body = bleach.clean(markdown.markdown(body), tags=["p", "h2", "h3", "strong", "em", "ul", "ol", "li", "blockquote", "br", "a"], attributes={"a": ["href"]}, protocols=["https", "http"], strip=True)
         source = meta["source"]
         url = canonical(source["url"])
+        references = ""
+        for number, ref in enumerate(meta.get("sources", [source]), 1):
+            ref_url = canonical(ref["url"])
+            ref_id = ref.get("id", f"S{number}")
+            references += f'<li id="source-{esc(ref_id)}" class="mb-4"><a class="underline" href="{esc(ref_url)}" rel="noopener noreferrer">[{esc(ref_id)}] {esc(ref["source"])} — {esc(ref["title"])}</a><p class="text-base">Data źródła: {esc(ref.get("published") or "nie podano")} · Odczyt: {esc(ref.get("retrieved") or "nie zapisano")}</p></li>'
+        details = f'<p class="text-base text-slate-500">{esc(meta.get("word_count", ""))} słów · Liczba źródeł: {len(meta.get("sources", [source]))} · {esc(meta.get("editorial_check", ""))}</p>' if meta.get("version") == 2 else ""
+
         article = f'''<article class="max-w-3xl mx-auto">
 <a href="../index.html" class="text-red-700">← Wszystkie wiadomości</a>
 <p class="text-red-700 font-bold mt-8">{esc(meta['category'])}</p>
 <h1 class="text-3xl md:text-5xl font-black my-5 leading-tight">{esc(meta['title'])}</h1>
 <p class="text-base text-slate-500">{esc(meta['author'])} · <time datetime="{esc(meta['date'])}">{esc(meta['date'])}</time></p>
 <p class="text-xl font-medium my-8">{esc(meta['summary'])}</p>
-<div class="article">{safe_body}</div>
-<aside class="mt-10 p-6 rounded-xl bg-slate-100"><strong>Źródło informacji:</strong>
-<a class="underline" href="{esc(url)}" rel="noopener noreferrer">{esc(source['source'])} — {esc(source['title'])}</a>
-<p class="text-base">Data publikacji źródła: {esc(source['published'])}</p></aside></article>'''
+{details}<div class="article">{safe_body}</div>
+<aside class="mt-10 p-6 rounded-xl bg-slate-100"><strong>Źródła informacji:</strong><ol class="mt-4">{references}</ol></aside></article>'''
         (OUT / "articles" / (meta["slug"] + ".html")).write_text(page(meta["title"], meta["summary"], article, "../index.html"), encoding="utf-8")
     (OUT / ".nojekyll").touch()
     print(f"Built {len(items)} articles in {OUT}")
