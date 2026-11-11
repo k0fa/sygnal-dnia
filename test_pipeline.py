@@ -84,9 +84,10 @@ class EditorialTests(unittest.TestCase):
         with self.assertRaisesRegex(n.Rejected, "Liczba"):
             n.check_draft(draft, n.check_dossier(dossier, docs), docs)
 
-    def test_short_article_is_rejected(self):
+   def test_short_article_is_rejected(self):
         docs, dossier, draft = fixture()
-        draft["sections"][0]["paragraphs"] = draft["sections"][0]["paragraphs"][:1]
+        for section in draft["sections"]:
+            section["paragraphs"] = section["paragraphs"][:1]
         with self.assertRaisesRegex(n.Rejected, "słów"):
             n.check_draft(draft, n.check_dossier(dossier, docs), docs)
 
