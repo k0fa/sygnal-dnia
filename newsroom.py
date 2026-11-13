@@ -164,7 +164,7 @@ class ArticleParser(HTMLParser):
         self.current = None
 
     def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
+        attrs = {name: value or "" for name, value in attrs}
         if tag == "a" and attrs.get("href") and not any(t in self.SKIP for t in self.stack):
             self.links.append(attrs["href"])
         if tag not in self.VOID:
@@ -223,7 +223,7 @@ class BodyParser(HTMLParser):
         self.body_depth, self.script_parts = None, None
 
     def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
+        attrs = {name: value or "" for name, value in attrs}
         if tag == "script" and attrs.get("type", "").lower() == "application/ld+json":
             self.script_parts = []
         classes = attrs.get("class", "").lower().split()
