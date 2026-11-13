@@ -16,7 +16,9 @@ from urllib.robotparser import RobotFileParser
 USER_AGENT = "SygnalDniaResearch/2.0"
 NEWS_DOMAINS = ("onet.pl", "wp.pl", "interia.pl")
 OFFICIAL_DOMAINS = ("gov.pl", "nbp.pl", "stat.gov.pl", "sejm.gov.pl", "europa.eu")
-ALLOWED = NEWS_DOMAINS + OFFICIAL_DOMAINS
+RESEARCH_DOMAINS = ("pap.pl", "cbos.pl", "ibris.pl", "pism.pl", "nasa.gov", "esa.int",
+                    "gov.uk", "president.gov.ua", "bank.gov.ua")
+ALLOWED = NEWS_DOMAINS + OFFICIAL_DOMAINS + RESEARCH_DOMAINS
 
 
 class Rejected(ValueError):
@@ -139,17 +141,7 @@ class Reader:
         doc.update(url=final_url, text=text, extraction_method=method, group=source_group(final_url),
                    retrieved=datetime.now(timezone.utc).isoformat(),
                    official=belongs(urlsplit(final_url).hostname or "", OFFICIAL_DOMAINS))
-        links = []
-        for href in article_links:
-            link = urljoin(final_url, href).split("#")[0]
-            if belongs(urlsplit(link).hostname or "", OFFICIAL_DOMAINS):
-                try:
-                    checked_url(link, dns=False)
-                    if link not in links:
-                        links.append(link)
-                except ValueError:
-                    pass
-        doc["official_links"] = links[:4]
+        doc["official_links"] = research_links(html, final_url)
         self.cache[item["url"]] = doc
         return doc
 
@@ -323,6 +315,53 @@ def extract_article(html, url, title):
     return text[:16000], method, legacy.links
 
 
+
+class SourceLinks(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack, self.links, self.current = [], [], None
+    def handle_starttag(self, tag, attrs):
+        attrs = {k: v or "" for k, v in attrs}
+        if tag not in ArticleParser.VOID:
+            self.stack.append(tag)
+        if tag == "a" and attrs.get("href") and not any(t in ArticleParser.SKIP for t in self.stack):
+            self.current = [attrs["href"], []]
+    def handle_data(self, text):
+        if self.current is not None:
+            self.current[1].append(text)
+    def handle_endtag(self, tag):
+        if tag == "a" and self.current is not None:
+            self.links.append((self.current[0], normalized(" ".join(self.current[1]))))
+            self.current = None
+        if tag in self.stack:
+            i = len(self.stack) - 1 - self.stack[::-1].index(tag)
+            self.stack = self.stack[:i]
+
+
+def research_links(html, base):
+    parser = SourceLinks()
+    parser.feed(html)
+    candidates = {}
+    terms = ("źródł", "source", "raport", "report", "badani", "research", "komunikat",
+             "statement", "wywiad", "interview", "dane", "dataset", "publikac")
+    for href, label in parser.links:
+        url = urljoin(base, href).split("#")[0]
+        p = urlsplit(url)
+        if url == base or len(p.path.strip("/")) < 3:
+            continue
+        try:
+            checked_url(url, dns=False)
+        except ValueError:
+            continue
+        text = (label + " " + p.path).casefold()
+        score = sum(term in text for term in terms)
+        if belongs(p.hostname or "", OFFICIAL_DOMAINS):
+            score += 2
+        if score:
+            candidates[url] = max(score, candidates.get(url, 0))
+    return sorted(candidates, key=lambda url: -candidates[url])[:4]
+
+
 def ngrams(text, n=10):
     tokens = words(text)
     return {tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1)}
@@ -399,7 +438,7 @@ Jeśli brak dobrego tematu, topics=[]. Nie wymyślaj identyfikatorów."""
 EXTRACT = """Przygotuj dossier jednego wydarzenia z pobranych stron.
 Odrzuć menu, reklamy, poboczne zajawki i powielone depesze.
 Oceń pochodzenie źródeł według ZASAD POCHODZENIA poniżej.
-Zarzuty karne, zdrowie, ofiary i inwestycje oznacz high_risk=true.
+Klasyfikuj ryzyko według OCENY RYZYKA poniżej.
 Wyodrębnij 6–30 istotnych, odrębnych faktów. Nie rozbijaj jednego faktu
 na sztuczne punkty i nie powtarzaj parafraz tej samej informacji. Jeśli źródła
 nie dają 6 faktów, ready=false i opisz powód. Każdy fakt z dowodem: dokładny,
@@ -443,6 +482,12 @@ EXTRACT += "\nZASADY POCHODZENIA:\nZawsze zwróć source_mode: \"independent\" a
 
 WRITE += """\nW trybie attributed nazwij origin.name.value dokładnie w podsumowaniu i pierwszym\nakapicie. Dla poll tytuł zawiera słowo Sondaż, dla innych podaj autora lub Według.\nWyraźnie przypisuj twierdzenia źródłu. Nie sugeruj niezależnego potwierdzenia.\nSondaż opisuje jedno badanie; nie prognozuj wyniku wyborów. Nie wymyślaj metodologii.\n"""
 VERIFY += """\nW trybie attributed nie wymagaj dwóch niezależnych relacji: sprawdź zamiast tego\nprawdziwe pochodzenie, dowody nazwy autora, atrybucję każdej istotnej tezy i notę\nprovenance_note. Sama zgodność przedruków nie dowodzi prawdziwości wydarzenia.\nSprawdź, że wspólna depesza nie została nazwana niezależnym potwierdzeniem,\na sondaż nie został przedstawiony jako pewny wynik wyborów. Sprawdź metodologię\nlub jawne oznaczenie jej braków. Nie zmieniaj rygoru tematów wysokiego ryzyka.\n"""
+
+EXTRACT += "\nOCENA RYZYKA I ROLI DOKUMENTÓW:\nZawsze zwróć risk_reason (konkretne uzasadnienie) i risk_categories (lista).\nKategorie: criminal_allegation, casualties, medical, financial_advice,\nactive_conflict, public_safety, unconfirmed_personal_allegation.\nhigh_risk=true dokładnie wtedy, gdy lista nie jest pusta. Sama polityka, zmiana\nstanowiska, sondaż albo opis wyników finansowych NIE oznacza wysokiego ryzyka.\nOceniaj rzeczywiste twierdzenia: niepewne zarzuty wobec osoby, oskarżenia karne,\nofiary, działania wojenne, porady zdrowotne/inwestycyjne i zagrożenia wymagają\nrozszerzonej weryfikacji. Nie zmniejszaj ryzyka, by umożliwić publikację.\nDla high_risk=true podaj risk_fact_ids (wszystkie fakty o takim ryzyku) oraz\nprimary_evidence: [{\"source\":\"S1\",\"kind\":\"original_interview\",\n\"is_original\":true,\"author\":\"dokładna nazwa autora/instytucji\",\n\"authorship_quote\":\"dokładny fragment 30–500 znaków z text, zawierający autora\",\n\"why_primary\":\"dlaczego TA publikacja jest oryginalnym materiałem dla tych faktów\",\n\"supports_facts\":[\"F1\"]}].\nDozwolone kind: official_document, original_statement, original_research,\noriginal_dataset, firsthand_report, original_interview.\nŹródło pierwotne to rola KONKRETNEGO pobranego dokumentu, nie domena.\nCytat urzędnika w wtórnym artykule NIE zmienia artykułu w źródło pierwotne.\nTak samo domena urzędowa nie gwarantuje aktualności ani adekwatności.\nOryginalny wywiad lub własny reportaż mogą być pierwotne, jeśli tekst wyraźnie\npotwierdza autorstwo i bezpośredni charakter relacji. Sam podpis autora nie wystarcza.\nNie zakładaj, że dokument istnieje, tylko dlatego że inna strona go przywołuje.\nŹródła muszą występować w documents. Dowody faktów ryzyka muszą wskazywać na\nte same dokumenty i rzeczywiście wspierać te fakty.\nKomunikat zainteresowanej strony dowodzi jej oświadczenia, a nie automatycznie\nprawdziwości opisanych zdarzeń; zachowaj atrybucję w claim.\nGdy nie znaleziono pierwotnych dowodów, nie wymyślaj ich: primary_evidence=[].\n"
+
+SELECT += """\nWybieraj do trzech tematów możliwych do rzetelnego opisania, nie tylko najbardziej\nsensacyjne nagłówki. Jeśli są dostępne, uwzględnij temat technologiczny, naukowy,\nkulturalny lub opis konkretnego badania/komunikatu z nazwanym autorem. Preferuj\njasne pochodzenie i dostępny materiał. Nie zgaduj dostępności źródeł z samego tytułu.\nPrzy wojnie i niepotwierdzonych zarzutach preferuj widoczne wskazanie dokumentu\npierwotnego. Nie obniżaj oceny ryzyka, by umożliwić publikację.\n"""
+
+VERIFY += """\nSprawdź również high_risk, risk_reason i risk_categories. Jeśli dossier ukryło\nryzyko lub błędnie zaniżyło jego ocenę, approved=false. Nie zmieniaj klasyfikacji\nw celu obejścia kontroli. Opis roli dokumentu nie jest dowodem sam w sobie.\n"""
 
 class Gemini:
     def __init__(self, key):
@@ -585,6 +630,88 @@ def origin_note(dossier):
     return text + "\n\n"
 
 
+
+RISK_CATEGORIES = {"criminal_allegation", "casualties", "medical", "financial_advice",
+                   "active_conflict", "public_safety", "unconfirmed_personal_allegation"}
+PRIMARY_KINDS = {"official_document", "original_statement", "original_research",
+                 "original_dataset", "firsthand_report", "original_interview"}
+
+
+def check_risk(dossier, docs, facts):
+    reason = dossier.get("risk_reason")
+    categories = dossier.get("risk_categories")
+    if not isinstance(reason, str) or not reason.strip():
+        raise Rejected("Brak uzasadnienia oceny ryzyka.")
+    if (not isinstance(categories, list) or any(
+            not isinstance(c, str) or c not in RISK_CATEGORIES for c in categories)):
+        raise Rejected("Niepoprawne kategorie ryzyka.")
+    high = dossier["high_risk"]
+    if high != bool(categories):
+        raise Rejected("Sprzeczna klasyfikacja ryzyka: flaga i kategorie.")
+    if not high:
+        return []
+    prefix = "Temat wysokiego ryzyka (" + ", ".join(categories) + "): " + diagnostic_text(reason, 300) + ". "
+    risk_ids = dossier.get("risk_fact_ids")
+    if (not isinstance(risk_ids, list) or not risk_ids or
+            any(not isinstance(f, str) or f not in facts for f in risk_ids)):
+        raise Rejected(prefix + "Brak wskazania faktów wymagających rozszerzonej kontroli.")
+    primaries = dossier.get("primary_evidence")
+    if not isinstance(primaries, list) or not primaries:
+        raise Rejected(prefix + "Nie wskazano pobranego materiału pierwotnego.")
+    source_map = {d["id"]: d for d in docs}
+    covered, verified = set(), []
+    for primary in primaries:
+        if not isinstance(primary, dict):
+            raise Rejected(prefix + "Niepoprawny opis dowodu pierwotnego.")
+        sid = primary.get("source")
+        if (not isinstance(sid, str) or sid not in source_map or
+                primary.get("kind") not in PRIMARY_KINDS or
+                primary.get("is_original") is not True):
+            raise Rejected(prefix + "Nieznane źródło lub niepotwierdzona rola pierwotna.")
+        author = primary.get("author")
+        quote = primary.get("authorship_quote")
+        if (not isinstance(author, str) or not 2 <= len(author) <= 180 or
+                not isinstance(quote, str) or not 30 <= len(quote) <= 500 or
+                normalized(quote) not in normalized(source_map[sid]["text"]) or
+                normalized(author).casefold() not in normalized(quote).casefold()):
+            raise Rejected(prefix + "Brak rzeczywistego fragmentu potwierdzającego autorstwo.")
+        explanation = primary.get("why_primary")
+        if not isinstance(explanation, str) or len(explanation.strip()) < 20:
+            raise Rejected(prefix + "Brak wyjaśnienia roli dokumentu.")
+        ids = primary.get("supports_facts")
+        if (not isinstance(ids, list) or not ids or
+                any(not isinstance(fid, str) or fid not in risk_ids for fid in ids)):
+            raise Rejected(prefix + "Niepoprawne powiązanie dokumentu z faktami ryzyka.")
+        for fid in ids:
+            if not any(ev["source"] == sid for ev in facts[fid]["evidence"]):
+                raise Rejected(prefix + "Fakt ryzyka nie ma dowodu w wskazanym dokumencie.")
+        covered.update(ids)
+        verified.append(sid)
+    missing = set(risk_ids) - covered
+    if missing:
+        raise Rejected(prefix + "Brak dowodów pierwotnych dla: " + ", ".join(sorted(missing)))
+    return sorted(set(verified))
+
+
+def check_primary_review(review, dossier):
+    review_result(review)
+    expected = {p["source"] for p in dossier["primary_evidence"]}
+    decisions = review.get("primary_checks")
+    if not isinstance(decisions, list):
+        raise Rejected("Dodatkowa kontrola nie oceniła roli dokumentów pierwotnych.")
+    confirmed = set()
+    for decision in decisions:
+        if (not isinstance(decision, dict) or decision.get("source") not in expected
+                or decision.get("is_original") is not True
+                or decision.get("supports_risk_facts") is not True
+                or not isinstance(decision.get("reason"), str)
+                or len(decision["reason"].strip()) < 20):
+            raise Rejected("Dodatkowa kontrola odrzuciła rolę lub znaczenie źródła pierwotnego.")
+        confirmed.add(decision["source"])
+    if confirmed != expected:
+        raise Rejected("Dodatkowa kontrola pominęła część źródeł pierwotnych.")
+
+
 def check_dossier(dossier, docs):
     if dossier.get("ready") is not True:
         raise Rejected("Dossier: ready=" + str(dossier.get("ready")) + ", independent=" + str(dossier.get("independent")) + ". Uzasadnienie modelu: " + diagnostic_text(dossier.get("reason", "Model nie podał przyczyny.")))
@@ -596,9 +723,6 @@ def check_dossier(dossier, docs):
                        diagnostic_text(dossier.get("reason", "")))
     if type(dossier.get("high_risk")) is not bool:
         raise Rejected("Brak oceny ryzyka.")
-    if dossier["high_risk"] and (dossier.get("official_relevant") is not True or
-                                not any(d["official"] for d in docs)):
-        raise Rejected("Temat wysokiego ryzyka bez źródła pierwotnego.")
     source_map = {d["id"]: d for d in docs}
     ids, used, claims = set(), set(), set()
     for fact in facts:
@@ -625,8 +749,7 @@ def check_dossier(dossier, docs):
             used.add(ev["source"])
     if origin is None and len({source_map[s]["group"] for s in used}) < 2:
         raise Rejected("Fakty pochodzą od jednego wydawcy.")
-    if dossier["high_risk"] and not any(source_map[s]["official"] for s in used):
-        raise Rejected("Brak wykorzystanego dowodu pierwotnego.")
+    check_risk(dossier, docs, {f["id"]: f for f in facts})
     if origin is not None:
         used.update(e["source"] for e in origin["name"]["evidence"])
     return {f["id"]: f for f in facts}
@@ -760,6 +883,10 @@ def prepare_article(ai, reader, topics, diagnostics):
             logging.info("Temat %s: %s; źródła: %s", index, label,
                          json.dumps(entry["sources"], ensure_ascii=False))
             dossier = ai.ask(EXTRACT, dict(documents=docs))
+            entry["risk"] = dict(high=dossier.get("high_risk"),
+                                 categories=dossier.get("risk_categories"),
+                                 reason=diagnostic_text(dossier.get("risk_reason", "Brak uzasadnienia")))
+            logging.info("Ocena ryzyka: %s", json.dumps(entry["risk"], ensure_ascii=False))
             facts = check_dossier(dossier, docs)
             policy = article_policy(facts, docs)
             entry["length_policy"] = policy
@@ -774,11 +901,16 @@ def prepare_article(ai, reader, topics, diagnostics):
                                 provenance_note=origin_note(dossier))
             review_result(ai.ask(VERIFY, verification, tokens=4096))
             if dossier["high_risk"]:
-                review_result(ai.ask(
+                check_primary_review(ai.ask(
                     VERIFY + "\nDodatkowa kontrola wysokiego ryzyka: sprawdź bezpośrednie "
                     "potwierdzenie kluczowych twierdzeń w adekwatnym dokumencie pierwotnym. "
-                    "Nie publikuj porad medycznych ani inwestycyjnych.",
-                    verification, tokens=4096))
+                    "Nie publikuj porad medycznych ani inwestycyjnych. "
+                    "Oceń każdy element primary_evidence: tożsamość autora, pierwotność "
+                    "publikacji i rzeczywiste wsparcie faktów risk_fact_ids. Cytat lub podpis "
+                    "w przedruku nie wystarcza. Zwróć approved, issues oraz primary_checks: "
+                    "[{source: S1, is_original: true, supports_risk_facts: true, reason: uzasadnienie}]. "
+                    "Jeśli dokument jest wtórny albo nie wspiera faktów, approved=false.",
+                    verification, tokens=4096), dossier)
             entry.update(status="ZATWIERDZONO", reason="Kontrole zakończone.")
             return items, docs, dossier, facts, draft, length, used
         except Rejected as exc:
@@ -788,6 +920,7 @@ def prepare_article(ai, reader, topics, diagnostics):
                 break
     details = "\n".join(
         f'Temat {e["topic"]}: {e["title"]}\nPowód: {e.get("reason", e["status"])}\n'
+        + ("Ocena ryzyka: " + diagnostic_text(e.get("risk", {}), 600) + "\n")
         + "\n".join(f'Źródło: {s["url"]} | słowa: {s.get("words") if s.get("words") is not None else "brak odczytu"} | {s.get("method", "")} | {s.get("status", "")} | {s.get("reason", "")}' for s in e["sources"])
         for e in diagnostics)
     raise Rejected("Nie opublikowano artykułu. Wykorzystane wywołania API: "

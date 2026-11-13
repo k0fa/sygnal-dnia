@@ -1,63 +1,69 @@
-Sygnał Dnia — poprawka 2.4: niezależne relacje i jedno nazwane źródło
+Sygnał Dnia — aktualizacja 2.5: wybór tematów, źródła pierwotne i ryzyko
 
 WGRANIE
 1. Rozpakuj ZIP.
-2. https://github.com/k0fa/sygnal-dnia → Add file → Upload files.
-3. Wgraj generator.py, newsroom.py i test_pipeline.py do katalogu głównego.
-   Zachowaj dokładne nazwy; zastąp poprzednie pliki.
+2. Otwórz https://github.com/k0fa/sygnal-dnia → Add file → Upload files.
+3. Wgraj generator.py, newsroom.py i test_pipeline.py do głównego katalogu,
+   zastępując dotychczasowe pliki. Nie zmieniaj nazw ani wcięć ręcznie.
 4. Commit changes.
-5. Po zakończeniu uruchomienia wywołanego zmianą kodu wybierz:
-   Actions → Generate and publish news → Run workflow → main → Run workflow.
-Nie zmieniaj sekretu, modelu, workflow ani historii opublikowanych materiałów.
+5. Poczekaj na zakończenie uruchomienia wywołanego zmianą kodu.
+6. Actions → Generate and publish news → Run workflow → main → Run workflow.
+Nie używaj ponowienia starego uruchomienia, które korzysta ze starego kodu.
+Nie zmieniaj klucza, modelu, workflow ani historii opublikowanych artykułów.
 
-CO ZMIENIONO
-Dossier rozróżnia:
-- independent: rzeczywiście niezależne relacje, nadal wymagane dwie grupy wydawców;
-- attributed: opis jednego nazwanego sondażu, depeszy lub komunikatu.
-  Nie jest on przedstawiany jako niezależnie potwierdzone wydarzenie.
+DOBÓR TEMATÓW
+Instrukcja wyboru tematów preferuje możliwe do zweryfikowania informacje
+z rozpoznanym pochodzeniem. Jeśli są dostępne, uwzględnia też badania, technologię,
+naukę i kulturę. Nie nakazuje uznawania polityki lub sondażu za wysokie ryzyko
+wyłącznie na podstawie kategorii. Faktyczne zarzuty, działania wojenne, ofiary,
+zagrożenia, kwestie zdrowotne i porady inwestycyjne nadal wymagają rozszerzonej oceny.
+To preferencja w instrukcji modelu, nie gwarancja dostępności odpowiedniego tematu.
 
-Samo independent=false nie wystarcza do publikacji. Model musi wskazać tryb
-attributed, rodzaj materiału i nazwę pracowni/agencji/autora komunikatu,
-popartą dokładnym fragmentem pobranego tekstu. Nazwa i dowody są sprawdzane
-w kodzie, a ich znaczenie i poprawność dodatkowo przez model w końcowej ocenie.
-Gdy pochodzenia nie można ustalić, publikacja nadal jest wstrzymana.
+ŹRÓDŁA PIERWOTNE
+Decyduje rola konkretnego pobranego dokumentu, nie urzędowa domena.
+Obsługiwane role: oryginalny dokument, komunikat, badanie, zbiór danych,
+własny reportaż albo wywiad. Dla każdego wskazania model musi podać:
+- identyfikator faktycznie pobranego źródła;
+- autora i dokładny fragment tekstu wspierający ocenę autorstwa;
+- wyjaśnienie, dlaczego ta publikacja ma pierwotną rolę;
+- identyfikatory twierdzeń wysokiego ryzyka, które dokument wspiera.
+Kod sprawdza fragmenty i powiązania. Osobne wywołanie modelu musi następnie
+potwierdzić pierwotność i znaczenie każdego wskazanego dokumentu.
+Sam podpis autora, cytat urzędnika albo przedruk nie wystarczają.
+Komunikat strony konfliktu dowodzi treści jej oświadczenia, a nie automatycznie
+prawdziwości opisywanych zdarzeń. Instrukcje wymagają zachowania atrybucji.
 
-Nazwa pierwotnego źródła musi wystąpić w podsumowaniu i pierwszym akapicie.
-Tytuł sondażu musi zawierać słowo „sondaż”. Inne relacje muszą wskazać
-nazwę źródła lub formułę „według”. Sprawdzenie semantyczne ocenia atrybucję
-twierdzeń i odrzuca sugerowanie niezależnego potwierdzenia przedruków.
+POBIERANIE
+Skrypt śledzi rzeczywiste odnośniki w artykułach opisane jako źródło, raport,
+badanie, wywiad, dane lub komunikat. Nie otwiera adresów wymyślonych przez model.
+Rozszerzono listę dozwolonych domen o pap.pl, cbos.pl, ibris.pl, pism.pl,
+nasa.gov, esa.int, gov.uk, president.gov.ua i bank.gov.ua.
+Dopuszczenie domeny do pobrania nie oznacza uznania każdej jej publikacji za pierwotną.
+Nadal obowiązują robots.txt, kontrola publicznych adresów IP i HTTPS, limity pobierania,
+maksymalnie trzy dodatkowe odnośniki na temat i sześć dokumentów.
+Obsługiwane są strony HTML; PDF, filmy i źródła wymagające logowania nie są obsługiwane.
 
-W artykule pojawia się nota „Pochodzenie informacji” z przypisami.
-Nie sugeruje ona, że pobrano oryginalną depeszę: informuje o opracowaniu
-na podstawie wskazanych publikacji.
-
-SONDAŻE
-Pracownia badawcza jest wymagana i musi być wskazana w materiale.
-Zleceniodawca, termin, próba oraz metoda są podawane z dowodami lub
-oznaczone „nie podano w dostępnych materiałach”. Braki nie są uzupełniane
-z pamięci modelu. Publikacja wyjaśnia, że sondaż nie jest wynikiem przyszłych wyborów.
-Jeśli brak metodologii uniemożliwia rzetelny opis konkretnej tezy, kontrola końcowa
-nadal może odrzucić artykuł.
+RAPORTOWANIE
+Raport pokazuje uzasadnienie i kategorie ryzyka również wtedy, gdy publikacja
+została odrzucona. Brak dowodu pierwotnego wskazuje konkretny problem:
+nieznane źródło, brak fragmentu o autorstwie, brak powiązania z faktem lub
+brak dowodów dla części istotnych twierdzeń.
+Zapisano ocenę ryzyka i dowody pierwotne również w metadanych opublikowanego tekstu.
 
 POZOSTAŁE ZASADY
-Wybór tematów nadal zaczyna się od grup 2–5 pozycji RSS z co najmniej dwóch
-grup wydawców. Po usunięciu mocno powielonych tekstów może pozostać jeden materiał.
-Kod dopuszcza wtedy wyłącznie zweryfikowaną relację attributed; pojedynczy tekst
-nie przejdzie jako niezależne potwierdzenie.
-Minimum 300 słów materiału i 6 udokumentowanych faktów nadal obowiązuje.
-Długość 180–300, 300–550 lub 600–1000 słów jest dobierana jak w wersji 2.3.
-Maksymalnie 5 wywołań API i 1 artykuł w cyklu.
-Tematy wysokiego ryzyka nadal wymagają adekwatnego dokumentu urzędowego
-i dodatkowej kontroli. Nie wystarcza samo nazwanie depeszy.
+Zachowano trzy długości artykułów, tryb relacji z jednego nazwanego sondażu/depeszy,
+atrybucję, kontrolę danych i limit pięciu wywołań API oraz jednego artykułu na cykl.
+Wysokie ryzyko nadal oznacza dodatkową kontrolę. Jeśli po próbie kolejnego tematu
+brakuje limitu na wszystkie kontrole, publikacja jest wstrzymywana.
+Brak pierwotnego dowodu może nadal uniemożliwić publikację konkretnej wiadomości.
 
 SPRAWDZENIE
-53 testy zaliczone lokalnie na Python 3.15, bez pominiętych testów.
-Testy obejmują nowe tryby, fałszywą nazwę źródła, fałszywą metodologię,
-brak atrybucji, źródło po usunięciu duplikatów, wysokie ryzyko,
-zapis artykułów i obecność noty oraz przypisów na stronie HTML.
-Testy używają atrap odpowiedzi API, nie klucza użytkownika.
-Dotychczasowy workflow używa Python 3.12; wynik jego uruchomienia potwierdzi
-działanie w środowisku użytkownika. Nie zmieniono repozytorium zdalnego.
-Nie dodano płatnego wyszukiwania ani nowych zależności.
-To automatyczna kontrola zgodności z materiałami, nie gwarancja prawdziwości
-informacji. Publikacja może zostać wstrzymana.
+64 testy zaliczone lokalnie, bez pominiętych testów, na Python 3.15.
+Sprawdzono m.in. nieurzędowy oryginalny wywiad, samą urzędową domenę bez dowodu,
+zmyślony fragment autorstwa, niepełne powiązania faktów, dodatkową kontrolę,
+wykrywanie dozwolonych odnośników oraz zapis artykułu i budowę strony.
+Testy korzystały z atrap API; nie użyto klucza użytkownika.
+Nie wdrożono zmian do repozytorium ani nie zweryfikowano rzeczywistej generacji.
+Dotychczasowy GitHub Actions uruchamia te same testy na Python 3.12.
+Nie dodano płatnego wyszukiwania ani nowych zależności produkcyjnych.
+Automatyczna ocena modelu może być błędna i nie zastępuje weryfikacji człowieka.

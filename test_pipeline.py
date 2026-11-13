@@ -26,7 +26,8 @@ def fixture():
     facts = [dict(id=f"F{i+1}", claim=f"Fakt testowy numer {i+1}",
                   evidence=[dict(source=docs[i % 2]["id"], quote=docs[i % 2]["text"])])
              for i in range(16)]
-    dossier = dict(ready=True, independent=True, high_risk=False, official_relevant=False, facts=facts)
+    dossier = dict(ready=True, independent=True, high_risk=False, official_relevant=False, facts=facts,
+                   risk_reason="Opis neutralnego wydarzenia w materiale testowym.", risk_categories=[])
     sections = []
     for j in range(3):
         paragraphs = []
@@ -42,6 +43,26 @@ def fixture():
     for i, doc in enumerate(docs):
         doc["text"] += " " + " ".join(("źródło" if i == 0 else "relacja") + str(j) for j in range(650))
     return docs, dossier, draft
+
+
+
+def primary_fixture(docs, dossier):
+    quote = "Redakcja Alfa rozmawiała bezpośrednio ze świadkiem i opublikowała własny wywiad."
+    docs[0]["text"] += " " + quote
+    dossier.update(high_risk=True, risk_reason="Relacja dotyczy działań wojennych.",
+                   risk_categories=["active_conflict"], risk_fact_ids=["F1"],
+                   primary_evidence=[dict(
+                       source="S1", kind="original_interview", is_original=True,
+                       author="Redakcja Alfa", authorship_quote=quote,
+                       why_primary="Tekst opisuje własny wywiad redakcji ze świadkiem wydarzenia.",
+                       supports_facts=["F1"])])
+    return dossier
+
+
+def approved_primary_review():
+    return dict(approved=True, issues=[], primary_checks=[
+        dict(source="S1", is_original=True, supports_risk_facts=True,
+             reason="Oryginalny wywiad i wskazane fragmenty wspierają przypisane twierdzenia.")])
 
 
 class EditorialTests(unittest.TestCase):
@@ -62,7 +83,8 @@ class EditorialTests(unittest.TestCase):
 
     def test_high_risk_requires_primary_evidence(self):
         docs, dossier, _ = fixture()
-        dossier.update(high_risk=True, official_relevant=True)
+        dossier.update(high_risk=True, official_relevant=True, risk_categories=["active_conflict"],
+                       risk_reason="Opis działań wojennych.", risk_fact_ids=["F1"])
         with self.assertRaises(n.Rejected):
             n.check_dossier(dossier, docs)
 
@@ -233,7 +255,9 @@ class RetryTests(unittest.TestCase):
     def test_high_risk_cannot_skip_extra_review_after_retry(self):
         docs, dossier, draft = fixture()
         docs[0]["official"] = True
-        dossier.update(high_risk=True, official_relevant=True)
+        dossier.update(high_risk=True, official_relevant=True, risk_categories=["active_conflict"],
+                       risk_reason="Opis działań wojennych.", risk_fact_ids=["F1"])
+        primary_fixture(docs, dossier)
         ai = self.client([dict(ready=False, reason="Brak faktów"), dossier])
         with patch.object(n, "collect", return_value=docs):
             with self.assertRaisesRegex(n.Rejected, "wysokiego ryzyka"):
@@ -243,9 +267,11 @@ class RetryTests(unittest.TestCase):
     def test_high_risk_receives_both_reviews(self):
         docs, dossier, draft = fixture()
         docs[0]["official"] = True
-        dossier.update(high_risk=True, official_relevant=True)
+        dossier.update(high_risk=True, official_relevant=True, risk_categories=["active_conflict"],
+                       risk_reason="Opis działań wojennych.", risk_fact_ids=["F1"])
+        primary_fixture(docs, dossier)
         ai = self.client([dossier, draft, dict(approved=True, issues=[]),
-                          dict(approved=True, issues=[])])
+                          approved_primary_review()])
         with patch.object(n, "collect", return_value=docs):
             n.prepare_article(ai, None, [[dict(title="A")]], [])
         self.assertEqual(ai.calls, 5)
@@ -526,7 +552,8 @@ class ProvenanceTests(unittest.TestCase):
 
     def test_high_risk_still_requires_primary_source(self):
         docs, dossier, _ = self.attributed("dispatch")
-        dossier["high_risk"] = True
+        dossier.update(high_risk=True, risk_categories=["active_conflict"],
+                       risk_reason="Opis działań wojennych.", risk_fact_ids=["F1"])
         with self.assertRaisesRegex(n.Rejected, "wysokiego ryzyka"):
             n.check_dossier(dossier, docs)
 
@@ -571,6 +598,96 @@ class ProvenanceTests(unittest.TestCase):
         with patch(__name__ + ".fixture", return_value=(docs, dossier, draft)), \
              patch.object(b, "main", side_effect=build_and_check):
             IntegrationTests.test_publish_history_and_build(self)
+
+
+
+class PrimaryRiskTests(unittest.TestCase):
+    def test_original_nonofficial_document_can_qualify(self):
+        docs, dossier, _ = fixture()
+        primary_fixture(docs, dossier)
+        self.assertFalse(docs[0]["official"])
+        self.assertTrue(n.check_dossier(dossier, docs))
+
+    def test_government_domain_alone_is_not_enough(self):
+        docs, dossier, _ = fixture()
+        docs[0]["official"] = True
+        dossier.update(high_risk=True, risk_categories=["active_conflict"],
+                       risk_reason="Brak potwierdzenia ataku.", risk_fact_ids=["F1"])
+        with self.assertRaisesRegex(n.Rejected, "Nie wskazano"):
+            n.check_dossier(dossier, docs)
+
+    def test_risk_reason_is_required(self):
+        docs, dossier, _ = fixture()
+        dossier.pop("risk_reason")
+        with self.assertRaisesRegex(n.Rejected, "uzasadnienia"):
+            n.check_dossier(dossier, docs)
+
+    def test_low_flag_cannot_hide_high_risk_category(self):
+        docs, dossier, _ = fixture()
+        dossier["risk_categories"] = ["casualties"]
+        with self.assertRaisesRegex(n.Rejected, "Sprzeczna"):
+            n.check_dossier(dossier, docs)
+
+    def test_missing_author_quote_is_rejected(self):
+        docs, dossier, _ = fixture()
+        primary_fixture(docs, dossier)
+        dossier["primary_evidence"][0]["authorship_quote"] = "Redakcja Alfa opisała nieistniejący w źródle materiał."
+        with self.assertRaisesRegex(n.Rejected, "autorstwo"):
+            n.check_dossier(dossier, docs)
+
+    def test_secondary_document_cannot_be_marked_primary(self):
+        docs, dossier, _ = fixture()
+        primary_fixture(docs, dossier)
+        dossier["primary_evidence"][0]["is_original"] = False
+        with self.assertRaises(n.Rejected):
+            n.check_dossier(dossier, docs)
+
+    def test_primary_has_to_support_each_risk_fact(self):
+        docs, dossier, _ = fixture()
+        primary_fixture(docs, dossier)
+        dossier["risk_fact_ids"].append("F2")
+        with self.assertRaisesRegex(n.Rejected, "F2"):
+            n.check_dossier(dossier, docs)
+
+    def test_primary_cannot_claim_fact_from_other_source(self):
+        docs, dossier, _ = fixture()
+        primary_fixture(docs, dossier)
+        dossier["risk_fact_ids"] = ["F2"]
+        dossier["primary_evidence"][0]["supports_facts"] = ["F2"]
+        with self.assertRaisesRegex(n.Rejected, "nie ma dowodu"):
+            n.check_dossier(dossier, docs)
+
+    def test_second_review_must_confirm_document_role(self):
+        docs, dossier, _ = fixture()
+        primary_fixture(docs, dossier)
+        with self.assertRaises(n.Rejected):
+            n.check_primary_review(dict(approved=True, issues=[]), dossier)
+        review = approved_primary_review()
+        review["primary_checks"][0]["is_original"] = False
+        with self.assertRaises(n.Rejected):
+            n.check_primary_review(review, dossier)
+        n.check_primary_review(approved_primary_review(), dossier)
+
+    def test_research_links_are_real_and_allowed(self):
+        html = ('<nav><a href="https://www.gov.pl/web/nav/komunikat">Źródło</a></nav>'
+                '<article><a href="https://www.cbos.pl/raport-test">Raport źródłowy</a>'
+                '<a href="https://wiadomosci.onet.pl/wywiad-test">Oryginalny wywiad</a>'
+                '<a href="https://unknown.invalid/report">Raport</a>'
+                '<a href="http://127.0.0.1/report">Źródło</a></article>')
+        links = n.research_links(html, "https://onet.pl/test")
+        self.assertEqual(len(links), 2)
+        self.assertIn("https://www.cbos.pl/raport-test", links)
+        self.assertIn("https://wiadomosci.onet.pl/wywiad-test", links)
+
+    def test_risk_explanation_survives_rejection_summary(self):
+        docs, dossier, _ = fixture()
+        dossier.update(high_risk=True, risk_categories=["casualties"],
+                       risk_reason="Brak niezależnego potwierdzenia liczby ofiar.",
+                       risk_fact_ids=["F1"])
+        ai = RetryTests().client([dossier])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "liczby ofiar"):
+                n.prepare_article(ai, None, [[dict(title="Temat")]], [])
 
 
 if __name__ == "__main__":

@@ -64,7 +64,7 @@ def run():
     if not queue:
         raise Rejected("Brak nowych tematów RSS.")
     ai = Gemini(key)
-    logging.info("Wersja 2.4: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
+    logging.info("Wersja 2.5: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
     topics = select_topics(ai, queue, records)
     if not topics:
         raise Rejected("Brak materiałów o jednym wydarzeniu od dwóch wydawców.")
@@ -86,7 +86,8 @@ def run():
         editorial_check="Automatyczne porównanie ze źródłami; nie jest kontrolą człowieka.",
         model=ai.model, version=2, article_format=policy["mode"],
         fact_count=policy["fact_count"], source_word_count=policy["source_words"],
-        source_mode=dossier.get("source_mode", "independent"), origin=dossier.get("origin"))
+        source_mode=dossier.get("source_mode", "independent"), origin=dossier.get("origin"), risk_reason=dossier.get("risk_reason"),
+        risk_categories=dossier.get("risk_categories"), primary_evidence=dossier.get("primary_evidence", []))
     document = "---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n\n"
     document += render_markdown(draft, facts, dossier)
     slug = hashlib.sha256(source_records[0]["url"].encode()).hexdigest()[:24]
