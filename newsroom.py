@@ -133,8 +133,8 @@ class Reader:
         final_url, html = self.page(item["url"])
         text, method, article_links = extract_article(html, final_url, item.get("title", ""))
         count = len(words(text))
-        if count < 250:
-            raise SourceRejected(f"Odczytano {count} słów; wymagane minimum 250.", count, method)
+        if count < 120:
+            raise SourceRejected(f"Odczytano {count} słów; wymagane minimum 120.", count, method)
         doc = {k: item.get(k, "") for k in ("url", "title", "source", "published")}
         doc.update(url=final_url, text=text, extraction_method=method, group=source_group(final_url),
                    retrieved=datetime.now(timezone.utc).isoformat(),
@@ -374,8 +374,8 @@ def collect(reader, items, diagnostics=None):
     if groups < 2:
         raise Rejected(f"Przyjęto {len(docs)} źródeł, {groups} grup wydawców, {total} słów. "
                        "Wymagane co najmniej dwie grupy wydawców/instytucji.")
-    if total < 800:
-        raise Rejected(f"Przyjęto {len(docs)} źródeł, {total} słów; wymagane minimum 800.")
+    if total < 300:
+        raise Rejected(f"Przyjęto {len(docs)} źródeł, {total} słów; wymagane minimum 300.")
     for i, doc in enumerate(docs, 1):
         doc["id"] = f"S{i}"
     return docs
@@ -401,7 +401,9 @@ Odrzuć menu, reklamy, poboczne zajawki i powielone depesze.
 Oceń niezależność źródeł; różne domeny nie wystarczają. Jeśli nie można
 potwierdzić niezależności dwóch relacji, ready=false.
 Zarzuty karne, zdrowie, ofiary i inwestycje oznacz high_risk=true.
-Wyodrębnij 12–30 istotnych pojedynczych faktów, każdy z dowodem: dokładny,
+Wyodrębnij 6–30 istotnych, odrębnych faktów. Nie rozbijaj jednego faktu
+na sztuczne punkty i nie powtarzaj parafraz tej samej informacji. Jeśli źródła
+nie dają 6 faktów, ready=false i opisz powód. Każdy fakt z dowodem: dokładny,
 ciągły fragment 30–500 znaków z text źródła. Nie parafrazuj dowodu.
 Twierdzenia zainteresowanej strony nie są potwierdzonymi faktami.
 Oficjalna strona musi dotyczyć wydarzenia, nie być stroną główną.
@@ -413,10 +415,12 @@ Zwróć {"ready":true,"independent":true,"high_risk":false,
 Przy sprzecznych kluczowych danych ready=false. Oceniaj rzeczywistą treść."""
 
 WRITE = """Napisz oryginalny, obiektywny artykuł po polsku z dossier.
-Dobierz długość do faktów: 350–1000 słów w akapitach. Preferuj 600–1000, jeśli źródła to uzasadniają. Bez powtórzeń i lania wody. Jeśli brakuje
-materiału na 350 słów, publish=false. Nie dopisuj wiedzy z pamięci.
+Ściśle zastosuj length_policy przekazane w danych: min_words–max_words
+słów w akapitach i min_sections–max_sections sekcji. To ograniczenia kodu.
+Dopasuj szczegółowość do faktów. Bez powtórzeń, lania wody i wiedzy z pamięci.
+Jeśli fakty nie wystarczają na dolny limit, publish=false; nie dopełniaj tekstu.
 Konkretny tytuł: kto, co zrobił; bez clickbaitu i przesądzania zarzutów.
-Wprowadzenie, 3–6 śródtytułów, wydarzenie i udokumentowany kontekst.
+Wprowadzenie, śródtytuły zgodne z length_policy, wydarzenie i udokumentowany kontekst.
 Na końcu omów istotne niewiadome, bez prognoz niemających podstaw.
 Każdy akapit, tytuł, podsumowanie i śródtytuł musi wskazywać id faktów,
 uzasadniających WSZYSTKIE twierdzenia. Zwykły tekst, bez HTML, Markdown,
@@ -490,20 +494,26 @@ def check_dossier(dossier, docs):
     if dossier.get("ready") is not True or dossier.get("independent") is not True:
         raise Rejected("Dossier: ready=" + str(dossier.get("ready")) + ", independent=" + str(dossier.get("independent")) + ". Uzasadnienie modelu: " + diagnostic_text(dossier.get("reason", "Model nie podał przyczyny.")))
     facts = dossier.get("facts")
-    if not isinstance(facts, list) or not 12 <= len(facts) <= 30:
-        raise Rejected("Wymagane 12–30 udokumentowanych faktów.")
+    if not isinstance(facts, list) or not 6 <= len(facts) <= 30:
+        actual = len(facts) if isinstance(facts, list) else "niepoprawny format"
+        raise Rejected(f"Dossier: otrzymano {actual} faktów; wymagane 6–30. " +
+                       diagnostic_text(dossier.get("reason", "")))
     if type(dossier.get("high_risk")) is not bool:
         raise Rejected("Brak oceny ryzyka.")
     if dossier["high_risk"] and (dossier.get("official_relevant") is not True or
                                 not any(d["official"] for d in docs)):
         raise Rejected("Temat wysokiego ryzyka bez źródła pierwotnego.")
     source_map = {d["id"]: d for d in docs}
-    ids, used = set(), set()
+    ids, used, claims = set(), set(), set()
     for fact in facts:
         if not isinstance(fact, dict) or not re.fullmatch(r"F[1-9]\d*", str(fact.get("id", ""))):
             raise Rejected("Niepoprawny identyfikator faktu.")
         if fact["id"] in ids or not isinstance(fact.get("claim"), str) or not fact["claim"].strip():
             raise Rejected("Powtórzony lub pusty fakt.")
+        claim = normalized(fact["claim"]).casefold()
+        if claim in claims:
+            raise Rejected("Powtórzony fakt w dossier.")
+        claims.add(claim)
         ids.add(fact["id"])
         evidence = fact.get("evidence")
         if not isinstance(evidence, list) or not evidence:
@@ -524,9 +534,31 @@ def check_dossier(dossier, docs):
     return {f["id"]: f for f in facts}
 
 
+
+def article_policy(facts, docs):
+    """Choose output limits from cited source material and documented facts."""
+    cited = {e["source"] for fact in facts.values() for e in fact["evidence"]}
+    source_words = sum(len(words(d["text"])) for d in docs if d["id"] in cited)
+    count = len(facts)
+    if count < 6 or source_words < 300:
+        raise Rejected(f"Za mało materiału nawet na krótką wiadomość: "
+                       f"{count} faktów, {source_words} słów wykorzystanych źródeł "
+                       "(minimum 6 faktów i 300 słów).")
+    if count >= 16 and source_words >= 1200:
+        mode, low, high, sections = "długi artykuł", 600, 1000, 3
+    elif count >= 10 and source_words >= 650:
+        mode, low, high, sections = "artykuł", 300, 550, 3
+    else:
+        mode, low, high, sections = "krótka wiadomość", 180, 300, 2
+    return dict(mode=mode, min_words=low, max_words=high,
+                min_sections=sections, max_sections=6 if sections == 3 else 4,
+                fact_count=count, source_words=source_words)
+
+
 def check_draft(draft, facts, docs):
+    policy = article_policy(facts, docs)
     if draft.get("publish") is not True:
-        raise Rejected("Model nie ma materiału na długi artykuł.")
+        raise Rejected("Model odmówił napisania tekstu przy dostępnym materiale.")
     used, passages = set(), []
 
     def verify_piece(text, refs, minimum, maximum):
@@ -542,8 +574,8 @@ def check_draft(draft, facts, docs):
     verify_piece(draft.get("title"), draft.get("title_facts"), 15, 160)
     verify_piece(draft.get("summary"), draft.get("summary_facts"), 40, 650)
     sections = draft.get("sections")
-    if not isinstance(sections, list) or not 3 <= len(sections) <= 6:
-        raise Rejected("Wymagane 3–6 sekcji.")
+    if not isinstance(sections, list) or not policy["min_sections"] <= len(sections) <= policy["max_sections"]:
+        raise Rejected(f'Wymagane {policy["min_sections"]}–{policy["max_sections"]} sekcji.')
     body = []
     for section in sections:
         if not isinstance(section, dict):
@@ -558,8 +590,9 @@ def check_draft(draft, facts, docs):
             verify_piece(paragraph.get("text"), paragraph.get("facts"), 60, 2500)
             body.append(paragraph["text"])
     length = sum(len(words(p)) for p in body)
-    if not 350 <= length <= 1000:
-        raise Rejected(f"Artykuł ma {length} słów; wymagane 350–1000.")
+    if not policy["min_words"] <= length <= policy["max_words"]:
+        raise Rejected(f'Tekst ma {length} słów; tryb {policy["mode"]} wymaga '
+                       f'{policy["min_words"]}–{policy["max_words"]}.')
     if len(set(body)) != len(body):
         raise Rejected("Powtórzone akapity.")
     source_text = " ".join(d["text"] for d in docs)
@@ -623,13 +656,16 @@ def prepare_article(ai, reader, topics, diagnostics):
                          json.dumps(entry["sources"], ensure_ascii=False))
             dossier = ai.ask(EXTRACT, dict(documents=docs))
             facts = check_dossier(dossier, docs)
+            policy = article_policy(facts, docs)
+            entry["length_policy"] = policy
+            logging.info("Format tekstu: %s", json.dumps(policy, ensure_ascii=False))
             required = 3 if dossier["high_risk"] else 2
             if 5 - ai.calls < required:
                 raise Rejected("Za mało wywołań API na tekst i wszystkie wymagane kontrole "
                                "(w tym kontrolę wysokiego ryzyka).")
-            draft = ai.ask(WRITE, dict(dossier=dossier), tokens=12288)
+            draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
             length, used = check_draft(draft, facts, docs)
-            verification = dict(documents=docs, dossier=dossier, article=draft)
+            verification = dict(documents=docs, dossier=dossier, article=draft, length_policy=policy)
             review_result(ai.ask(VERIFY, verification, tokens=4096))
             if dossier["high_risk"]:
                 review_result(ai.ask(

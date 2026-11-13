@@ -1,33 +1,57 @@
-Sygnał Dnia — poprawka 2.2 (na wersję 2.1)
-1. Rozpakuj ZIP.
-2. Repozytorium https://github.com/k0fa/sygnal-dnia → Add file → Upload files.
-3. Wgraj newsroom.py oraz test_pipeline.py do katalogu głównego, zastępując pliki.
-4. Commit changes. Poczekaj na zakończenie automatycznego uruchomienia.
-5. Actions → Generate and publish news → Run workflow → main → Run workflow.
-Nie zmieniaj generator.py z wersji 2.1, klucza, modelu ani workflow.
+Sygnał Dnia — poprawka 2.3: długość dopasowana do materiału
 
-Co poprawiono:
-- Odczyt tekstu z oznaczonych articleBody / article-body / article-content,
-  także jeśli treść nie jest umieszczona w elementach p.
-- Odczyt pasującego do adresu lub tytułu Article/NewsArticle z JSON-LD,
-  tylko przy isAccessibleForFree=true. Nie pobiera płatnych treści z tej ścieżki.
-- Przywrócono limit 16000 znaków na źródło; poprzednia poprawka przypadkowo
-  zmniejszyła go do 8000 znaków.
-- Każda próba pobrania ma wynik: adres, liczba słów (albo brak odczytu),
-  metoda, przyjęto/pominięto i powód. Wyniki pozostają w podsumowaniu także
-  po odrzuceniu całego tematu. Powielone źródła mają osobny powód pominięcia.
-- Temat odrzucony przez próg 800 słów podaje rzeczywistą sumę przyjętych treści.
-- Bez obniżania progów: 250 słów na źródło, 800 łącznie, dwie grupy wydawców,
-  350–1000 słów artykułu. Pozostają weryfikacja faktów i limit 5 wywołań API.
+WGRANIE
+1. Rozpakuj Sygnal_Dnia_poprawka_2_3.zip.
+2. Otwórz https://github.com/k0fa/sygnal-dnia
+3. Add file → Upload files.
+4. Wgraj trzy pliki bezpośrednio do katalogu głównego:
+   generator.py, newsroom.py, test_pipeline.py.
+   Zastąp poprzednie wersje pod dokładnie tymi samymi nazwami.
+5. Commit changes.
+6. Po zakończeniu uruchomienia wywołanego zmianą kodu:
+   Actions → Generate and publish news → Run workflow → main → Run workflow.
+   Nie wybieraj Re-run starego uruchomienia.
+Nie zmieniaj klucza GEMINI_API_KEY, modelu ani workflow. Zachowaj historię i artykuły.
 
-Ograniczenia:
-Dwie krótkie relacje nadal mogą nie spełnić wymagań; poprawka nie gwarantuje
-artykułu w każdym cyklu. Nie dodano nowych źródeł ani płatnego wyszukiwania.
-Metoda ekstrakcji nie dowodzi kompletności strony. Blokady, robots.txt i błędy HTTP
-są respektowane i raportowane. Nie wykonano rzeczywistej generacji kluczem użytkownika.
-Próba pobrania przykładowego adresu WP w tym środowisku zwróciła HTTP 404,
-więc nie potwierdzono działania na tym konkretnym artykule.
+ZASADY DOBORU DŁUGOŚCI
+Skrypt najpierw sprawdza dossier i dowody, następnie wyznacza zakres:
+- krótka wiadomość: 180–300 słów; minimum 6 udokumentowanych faktów
+  i 300 słów wykorzystanych materiałów;
+- artykuł: 300–550 słów; minimum 10 faktów i 650 słów wykorzystanych materiałów;
+- długi artykuł: 600–1000 słów; minimum 16 faktów i 1200 słów wykorzystanych materiałów.
+Wybierany jest najwyższy spełniony zakres. Liczone są źródła przywołane w dowodach.
+Przykład: 708 słów materiałów i 10 faktów pozwala na 300–550 słów artykułu;
+708 słów i 6 faktów — na krótką wiadomość. Nie oznacza to automatycznej publikacji.
 
-Walidacja:
-Testy lokalne Python 3.15; wyniki przekazane w odpowiedzi. Testy integracyjne
-wymagają bibliotek instalowanych przez istniejący GitHub Actions.
+Odrzucono dawny sztywny próg 800 słów oraz wymóg minimum 12 faktów dla każdego tekstu.
+Pojedyncze źródło musi mieć minimum 120 słów, więc relacja licząca 213 słów
+nie odpada wyłącznie z powodu długości. Utrzymano minimum dwóch grup wydawców,
+odrzucanie silnie podobnych tekstów i ocenę niezależności relacji przez model.
+
+PRZEBIEG
+Gemini wyodrębnia 6–30 odrębnych faktów, każdy z fragmentem rzeczywistego źródła.
+Nie wolno sztucznie dzielić jednego faktu, powtarzać informacji lub dopisywać wiedzy.
+Identyczne opisy faktów są odrzucane przez kod; podobieństwo znaczeniowe ocenia model.
+Instrukcja pisania otrzymuje konkretne limity wyznaczone przez kod.
+Walidacja artykułu samodzielnie wylicza ten sam zakres i sprawdza długość.
+Każdy tekst przechodzi końcową kontrolę zgodności ze źródłami.
+Tematy wysokiego ryzyka nadal wymagają odpowiedniego źródła urzędowego
+i dodatkowej kontroli. Limit pozostaje: 5 żądań API i 1 artykuł na cykl.
+Po odrzuceniu tematu następny jest podejmowany, jeśli starczy limitu na kontrole.
+
+DODATKOWE POPRAWKI
+W obu parserach uwzględniono atrybuty HTML bez wartości, które wcześniej powodowały
+AttributeError. Zachowano odczyt articleBody i diagnostykę każdego źródła.
+Komunikat o niewłaściwej liczbie faktów pokazuje rzeczywistą liczbę i uzasadnienie.
+Podsumowanie udanej publikacji pokazuje format tekstu, liczbę faktów i długość.
+
+TESTY I OGRANICZENIA
+Wszystkie 42 testy lokalne zaliczone; brak pominiętych testów.
+Zainstalowano istniejące zależności z requirements.txt w odizolowanym katalogu testów.
+Testowano na Python 3.15, podczas gdy dotychczasowy workflow używa Python 3.12.
+Testy obejmują zakresy długości, 708 słów źródeł, sześć faktów, granice zakresów,
+zapis krótkiego i długiego tekstu, budowę HTML, odtwarzanie historii, limity API,
+odrzucenia i puste atrybuty HTML. Testy używają atrap odpowiedzi API.
+Nie uruchomiono Gemini z Twoim kluczem ani nie zmieniono Twojego repozytorium.
+Kod nie gwarantuje publikacji w każdym cyklu ani nie zastępuje weryfikacji człowieka.
+Nie dodano płatnego wyszukiwania, nowych usług ani nowych zależności produkcyjnych.

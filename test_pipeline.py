@@ -25,7 +25,7 @@ def fixture():
              text="Druga relacja przedstawia szczegóły wydarzenia i ograniczenia dostępnych danych.")]
     facts = [dict(id=f"F{i+1}", claim=f"Fakt testowy numer {i+1}",
                   evidence=[dict(source=docs[i % 2]["id"], quote=docs[i % 2]["text"])])
-             for i in range(12)]
+             for i in range(16)]
     dossier = dict(ready=True, independent=True, high_risk=False, official_relevant=False, facts=facts)
     sections = []
     for j in range(3):
@@ -39,6 +39,8 @@ def fixture():
     draft = dict(publish=True, title="Testowy artykuł opisujący wydarzenie",
                  title_facts=["F1"], summary="Podsumowanie testowego wydarzenia z odwołaniem do obu dostępnych relacji.",
                  summary_facts=["F1", "F2"], sections=sections)
+    for i, doc in enumerate(docs):
+        doc["text"] += " " + " ".join(("źródło" if i == 0 else "relacja") + str(j) for j in range(650))
     return docs, dossier, draft
 
 
@@ -312,10 +314,10 @@ class ExtractionTests(unittest.TestCase):
     def test_short_source_retains_count(self):
         reader = n.Reader()
         with patch.object(reader, "page", return_value=(
-                "https://onet.pl/a", '<div itemprop="articleBody">' + 'słowo ' * 120 + '</div>')):
+                "https://onet.pl/a", '<div itemprop="articleBody">' + 'słowo ' * 119 + '</div>')):
             with self.assertRaises(n.SourceRejected) as error:
                 reader.document(dict(url="https://onet.pl/a"))
-        self.assertEqual(error.exception.count, 120)
+        self.assertEqual(error.exception.count, 119)
 
     def test_collection_failure_preserves_all_source_diagnostics(self):
         reader = MagicMock()
@@ -329,18 +331,18 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(audit[1]["words"], None)
         self.assertIn("403", audit[1]["reason"])
 
-    def test_less_than_800_reports_real_total(self):
+    def test_less_than_300_reports_real_total(self):
         def document(item):
             prefix = "alpha" if "onet" in item["url"] else "beta"
             return dict(url=item["url"], group=n.source_group(item["url"]),
-                        text=" ".join(prefix + str(i) for i in range(300)),
+                        text=" ".join(prefix + str(i) for i in range(140)),
                         official_links=[])
         reader = MagicMock()
         reader.document.side_effect = document
         audit = []
-        with self.assertRaisesRegex(n.Rejected, "600 słów"):
+        with self.assertRaisesRegex(n.Rejected, "280 słów"):
             n.collect(reader, [dict(url="https://onet.pl/a"), dict(url="https://wp.pl/b")], audit)
-        self.assertEqual([a["words"] for a in audit], [300, 300])
+        self.assertEqual([a["words"] for a in audit], [140, 140])
         self.assertTrue(all(a["status"] == "PRZYJĘTO" for a in audit))
 
     def test_original_16000_character_limit_restored(self):
@@ -351,6 +353,108 @@ class ExtractionTests(unittest.TestCase):
             doc = reader.document(dict(url="https://onet.pl/a"))
         self.assertGreater(len(doc["text"]), 8000)
         self.assertLessEqual(len(doc["text"]), 16000)
+
+
+
+class AdaptiveLengthTests(unittest.TestCase):
+    def material(self, total, count):
+        docs, dossier, draft = fixture()
+        for index, doc in enumerate(docs):
+            length = total // 2 + (total % 2 if index else 0)
+            doc["text"] = " ".join(doc["text"].split()[:length])
+        dossier["facts"] = dossier["facts"][:count]
+        return docs, dossier, draft
+
+    def article(self, draft, length):
+        # Three unique paragraphs with an exact synthetic word count.
+        for i, section in enumerate(draft["sections"]):
+            size = length // 3 + (length % 3 if i == 0 else 0)
+            prefix = ["Pierwszy", "Drugi", "Trzeci"][i]
+            section["paragraphs"] = [
+                dict(text=prefix + " " + " ".join(["opis"] * (size - 1)),
+                     facts=["F1", "F2"])]
+        return draft
+
+    def test_708_source_words_allow_standard_article(self):
+        docs, dossier, draft = self.material(708, 10)
+        facts = n.check_dossier(dossier, docs)
+        policy = n.article_policy(facts, docs)
+        self.assertEqual((policy["min_words"], policy["max_words"]), (300, 550))
+        self.assertEqual(policy["source_words"], 708)
+        length, sources = n.check_draft(self.article(draft, 360), facts, docs)
+        self.assertEqual(length, 360)
+        self.assertEqual(sources, {"S1", "S2"})
+
+    def test_six_facts_choose_brief_even_with_long_sources(self):
+        docs, dossier, draft = self.material(1200, 6)
+        facts = n.check_dossier(dossier, docs)
+        self.assertEqual(n.article_policy(facts, docs)["max_words"], 300)
+        self.assertEqual(n.check_draft(self.article(draft, 216), facts, docs)[0], 216)
+        with self.assertRaisesRegex(n.Rejected, "słów"):
+            n.check_draft(self.article(draft, 600), facts, docs)
+
+    def test_rich_material_keeps_long_articles(self):
+        docs, dossier, draft = self.material(1200, 16)
+        facts = n.check_dossier(dossier, docs)
+        self.assertEqual(n.article_policy(facts, docs)["min_words"], 600)
+        self.assertEqual(n.check_draft(draft, facts, docs)[0], 648)
+
+    def test_word_boundaries_for_each_mode(self):
+        for total, count, low, high in [(400, 6, 180, 300),
+                                        (708, 10, 300, 550),
+                                        (1200, 16, 600, 1000)]:
+            docs, dossier, draft = self.material(total, count)
+            facts = n.check_dossier(dossier, docs)
+            for length in [low, high]:
+                with self.subTest(count=count, length=length):
+                    self.assertEqual(n.check_draft(self.article(draft, length), facts, docs)[0], length)
+            for length in [low-1, high+1]:
+                with self.subTest(count=count, length=length):
+                    with self.assertRaisesRegex(n.Rejected, "słów"):
+                        n.check_draft(self.article(draft, length), facts, docs)
+
+    def test_five_facts_rejected_with_actual_count(self):
+        docs, dossier, _ = self.material(708, 5)
+        with self.assertRaisesRegex(n.Rejected, "otrzymano 5"):
+            n.check_dossier(dossier, docs)
+
+    def test_duplicate_claim_cannot_inflate_fact_count(self):
+        docs, dossier, _ = self.material(708, 10)
+        dossier["facts"][1]["claim"] = dossier["facts"][0]["claim"]
+        with self.assertRaisesRegex(n.Rejected, "Powtórzony fakt"):
+            n.check_dossier(dossier, docs)
+
+    def test_under_300_cited_words_rejected(self):
+        docs, dossier, _ = self.material(299, 10)
+        facts = n.check_dossier(dossier, docs)
+        with self.assertRaisesRegex(n.Rejected, "299"):
+            n.article_policy(facts, docs)
+
+    def test_uncited_material_does_not_inflate_length(self):
+        docs, dossier, _ = self.material(400, 16)
+        facts = n.check_dossier(dossier, docs)
+        extra = dict(docs[0], id="S3", text="materiał " * 2000)
+        self.assertEqual(n.article_policy(facts, docs + [extra])["max_words"], 300)
+
+    def test_213_word_source_is_read(self):
+        reader = n.Reader()
+        with patch.object(reader, "page", return_value=(
+                "https://onet.pl/a", '<div itemprop="articleBody">' + "słowo " * 213 + "</div>")):
+            doc = reader.document(dict(url="https://onet.pl/a"))
+        self.assertEqual(len(n.words(doc["text"])), 213)
+
+    def test_empty_html_attributes_regression(self):
+        html = ('<div class><script type>ignored</script><span itemprop>lead</span></div>'
+                '<div itemprop="articleBody" class><p>' + "Treść wiadomości. " * 100 + '</p></div>')
+        text, _, _ = n.extract_article(html, "https://onet.pl/a", "")
+        self.assertEqual(len(n.words(text)), 200)
+
+    @unittest.skipUnless(DEPS, "Integration requires requirements.txt")
+    def test_brief_is_saved_and_built(self):
+        docs, dossier, draft = self.material(708, 6)
+        draft = self.article(draft, 216)
+        with patch(__name__ + ".fixture", return_value=(docs, dossier, draft)):
+            IntegrationTests.test_publish_history_and_build(self)
 
 
 if __name__ == "__main__":

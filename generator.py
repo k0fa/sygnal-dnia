@@ -9,7 +9,7 @@ import yaml
 from scraper import CONTENT, DATA, duplicate, history, save_json
 from newsroom import (APIError, Rejected, Reader, Gemini, SELECT, EXTRACT, WRITE, VERIFY,
                       collect, check_dossier, check_draft, render_markdown, source_group,
-                      prepare_article, review_result, diagnostic_text)
+                      prepare_article, review_result, diagnostic_text, article_policy)
 
 
 def report(status, message, **extra):
@@ -64,7 +64,7 @@ def run():
     if not queue:
         raise Rejected("Brak nowych tematów RSS.")
     ai = Gemini(key)
-    logging.info("Wersja 2.1: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
+    logging.info("Wersja 2.3: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
     topics = select_topics(ai, queue, records)
     if not topics:
         raise Rejected("Brak materiałów o jednym wydarzeniu od dwóch wydawców.")
@@ -72,6 +72,7 @@ def run():
     diagnostics = []
     chosen, docs, dossier, facts, draft, length, used_sources = prepare_article(
         ai, reader, topics, diagnostics)
+    policy = article_policy(facts, docs)
     CONTENT.mkdir(parents=True, exist_ok=True)
     source_records = [{k: item.get(k, "") for k in ("url", "title", "source", "published")}
                       for item in chosen]
@@ -83,7 +84,8 @@ def run():
         author="Redakcja AI", source=source_records[0], sources=sources,
         dedup_sources=source_records, word_count=length,
         editorial_check="Automatyczne porównanie ze źródłami; nie jest kontrolą człowieka.",
-        model=ai.model, version=2)
+        model=ai.model, version=2, article_format=policy["mode"],
+        fact_count=policy["fact_count"], source_word_count=policy["source_words"])
     document = "---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n\n"
     document += render_markdown(draft, facts)
     slug = hashlib.sha256(source_records[0]["url"].encode()).hexdigest()[:24]
@@ -95,7 +97,7 @@ def run():
         if not any(r["url"] == source["url"] for r in records):
             records.append(source)
     save_json(DATA / "history.json", records)
-    report("OPUBLIKOWANO", f"Utworzono artykuł: {length} słów, {len(sources)} źródeł, {ai.calls} żądania API.",
+    report("OPUBLIKOWANO", f'Utworzono tekst ({policy["mode"]}, {policy["fact_count"]} faktów): {length} słów, {len(sources)} źródeł, {ai.calls} żądania API.',
            article=path.name, words=length, sources=len(sources), calls=ai.calls, attempts=diagnostics)
 
 
