@@ -457,5 +457,121 @@ class AdaptiveLengthTests(unittest.TestCase):
             IntegrationTests.test_publish_history_and_build(self)
 
 
+
+class ProvenanceTests(unittest.TestCase):
+    def attributed(self, kind="poll"):
+        docs, dossier, draft = fixture()
+        quote = "Badanie wykonała Pracownia Alfa na zlecenie Portalu Beta w ostatnim tygodniu."
+        docs[0]["text"] += " " + quote
+        dossier.update(source_mode="attributed", independent=False,
+                       origin=dict(kind=kind, name=dict(value="Pracownia Alfa",
+                           evidence=[dict(source="S1", quote=quote)])))
+        if kind == "poll":
+            dossier["origin"]["poll"] = dict(
+                commissioner=dict(value="Portal", evidence=[dict(source="S1", quote=quote)]),
+                fieldwork=None, sample=None, method=None)
+        draft["title"] = "Sondaż: opis wyników badania opinii" if kind == "poll" else "Według Pracownia Alfa opisano wydarzenie"
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        return docs, dossier, draft
+
+    def test_same_poll_can_pass_with_attribution(self):
+        docs, dossier, draft = self.attributed()
+        facts = n.check_dossier(dossier, docs)
+        n.check_draft(draft, facts, docs, dossier)
+        text = n.render_markdown(draft, facts, dossier)
+        self.assertIn("Pochodzenie informacji", text)
+        self.assertIn("Pracownia Alfa", text)
+        self.assertIn("próba: nie podano", text)
+        self.assertIn("[S1](#source-S1)", text)
+        self.assertIn("nie wynik przyszłych wyborów", text)
+
+    def test_origin_name_needs_real_evidence(self):
+        docs, dossier, _ = self.attributed()
+        dossier["origin"]["name"]["value"] = "Wymyślona Agencja"
+        with self.assertRaisesRegex(n.Rejected, "Niepotwierdzone"):
+            n.check_dossier(dossier, docs)
+
+    def test_false_independence_not_automatically_approved(self):
+        docs, dossier, _ = fixture()
+        dossier["independent"] = False
+        with self.assertRaises(n.Rejected):
+            n.check_dossier(dossier, docs)
+
+    def test_attributed_without_origin_is_rejected(self):
+        docs, dossier, _ = fixture()
+        dossier.update(source_mode="attributed", independent=False)
+        with self.assertRaises(n.Rejected):
+            n.check_dossier(dossier, docs)
+
+    def test_missing_attribution_rejected(self):
+        docs, dossier, draft = self.attributed()
+        facts = n.check_dossier(dossier, docs)
+        draft["summary"] = "Podsumowanie nie wskazuje autora badania opisanego w dostępnych materiałach."
+        with self.assertRaisesRegex(n.Rejected, "Brak nazwy"):
+            n.check_draft(draft, facts, docs, dossier)
+
+    def test_poll_must_be_named_in_title(self):
+        docs, dossier, draft = self.attributed()
+        draft["title"] = "Opis aktualnych wyników badania opinii"
+        with self.assertRaisesRegex(n.Rejected, "Tytuł"):
+            n.check_draft(draft, n.check_dossier(dossier, docs), docs, dossier)
+
+    def test_fabricated_poll_method_rejected(self):
+        docs, dossier, _ = self.attributed()
+        dossier["origin"]["poll"]["method"] = dict(
+            value="CATI", evidence=dossier["origin"]["name"]["evidence"])
+        with self.assertRaises(n.Rejected):
+            n.check_dossier(dossier, docs)
+
+    def test_high_risk_still_requires_primary_source(self):
+        docs, dossier, _ = self.attributed("dispatch")
+        dossier["high_risk"] = True
+        with self.assertRaisesRegex(n.Rejected, "wysokiego ryzyka"):
+            n.check_dossier(dossier, docs)
+
+    def test_one_retained_dispatch_source_can_be_used(self):
+        docs, dossier, draft = self.attributed("dispatch")
+        # Retained source is long enough after copied versions have been removed.
+        docs[0]["text"] += " materiał" * 700
+        for fact in dossier["facts"]:
+            fact["evidence"] = [dict(source="S1", quote=docs[0]["text"][:80])]
+        facts = n.check_dossier(dossier, docs[:1])
+        _, sources = n.check_draft(draft, facts, docs[:1], dossier)
+        self.assertEqual(sources, {"S1"})
+
+    def test_note_is_in_final_review(self):
+        docs, dossier, draft = self.attributed()
+        class Fake:
+            calls = 1
+            def ask(self, prompt, data, **kwargs):
+                self.calls += 1
+                if self.calls == 2:
+                    return dossier
+                if self.calls == 3:
+                    return draft
+                if "provenance_note" not in data:
+                    raise AssertionError("Missing provenance in review")
+                return dict(approved=True, issues=[])
+        with patch.object(n, "collect", return_value=docs):
+            n.prepare_article(Fake(), None, [[dict(title="Temat")]], [])
+
+
+    @unittest.skipUnless(DEPS, "Integration requires requirements.txt")
+    def test_provenance_survives_publication_and_html(self):
+        import build as b
+        docs, dossier, draft = self.attributed()
+        original_build = b.main
+        def build_and_check():
+            original_build()
+            article = next((b.OUT / "articles").glob("*.html")).read_text(encoding="utf-8")
+            self.assertIn("Pochodzenie informacji", article)
+            self.assertIn("Pracownia Alfa", article)
+            self.assertIn("próba: nie podano", article)
+        with patch(__name__ + ".fixture", return_value=(docs, dossier, draft)), \
+             patch.object(b, "main", side_effect=build_and_check):
+            IntegrationTests.test_publish_history_and_build(self)
+
+
 if __name__ == "__main__":
     unittest.main()

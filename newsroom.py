@@ -371,9 +371,9 @@ def collect(reader, items, diagnostics=None):
             add(dict(url=link, title="Dokument źródłowy", source=source_group(link)))
     groups = len({d["group"] for d in docs})
     total = sum(len(words(d["text"])) for d in docs)
-    if groups < 2:
+    if groups < 1:
         raise Rejected(f"Przyjęto {len(docs)} źródeł, {groups} grup wydawców, {total} słów. "
-                       "Wymagane co najmniej dwie grupy wydawców/instytucji.")
+                       "Brak materiałów do oceny pochodzenia.")
     if total < 300:
         raise Rejected(f"Przyjęto {len(docs)} źródeł, {total} słów; wymagane minimum 300.")
     for i, doc in enumerate(docs, 1):
@@ -398,8 +398,7 @@ Jeśli brak dobrego tematu, topics=[]. Nie wymyślaj identyfikatorów."""
 
 EXTRACT = """Przygotuj dossier jednego wydarzenia z pobranych stron.
 Odrzuć menu, reklamy, poboczne zajawki i powielone depesze.
-Oceń niezależność źródeł; różne domeny nie wystarczają. Jeśli nie można
-potwierdzić niezależności dwóch relacji, ready=false.
+Oceń pochodzenie źródeł według ZASAD POCHODZENIA poniżej.
 Zarzuty karne, zdrowie, ofiary i inwestycje oznacz high_risk=true.
 Wyodrębnij 6–30 istotnych, odrębnych faktów. Nie rozbijaj jednego faktu
 na sztuczne punkty i nie powtarzaj parafraz tej samej informacji. Jeśli źródła
@@ -439,6 +438,11 @@ tekst o niepowiązanych wydarzeniach, dowody z menu/stron głównych.
 Nie zakładaj poprawności dossier. Przy wątpliwościach approved=false.
 Zwróć {"approved":true,"issues":[]} albo approved=false i listę powodów."""
 
+
+EXTRACT += "\nZASADY POCHODZENIA:\nZawsze zwróć source_mode: \"independent\" albo \"attributed\".\nindependent: dwie rzeczywiście niezależne relacje, independent=true.\nattributed: jedno rozpoznane badanie, depesza agencji lub komunikat, opisane przez\nportale; independent=false. To NIE jest powód odrzucenia sam w sobie.\nready=true tylko jeśli pochodzenie jest ustalone i informacje wystarczają.\nNie traktuj różnych portali jako niezależnych potwierdzeń przedrukowanej depeszy.\nDla attributed dodaj origin:\n{\"kind\":\"poll|dispatch|statement\",\n\"name\":{\"value\":\"dokładna nazwa pracowni/agencji/autora komunikatu ze źródła\",\n\"evidence\":[{\"source\":\"S1\",\"quote\":\"dokładny fragment potwierdzający nazwę\"}]}}\nNie zgaduj agencji lub autora. Nazwa portalu nie zastępuje nieznanej agencji.\nDowód musi mieć 30–500 znaków, istnieć w text i zawierać dokładne value.\nDla kind=poll name to pracownia badawcza. Dodaj origin.poll z kluczami\ncommissioner, fieldwork, sample, method. Każde pole ma {\"value\":\"dokładny fragment\",\n\"evidence\":[{\"source\":\"S1\",\"quote\":\"dowód\"}]} albo null, gdy brak danych.\nNie uzupełniaj braków metodologii z wiedzy własnej. Nie traktuj jednego badania\nopisanego przez dwa portale jako dwóch badań. Uwzględnij pochodzenie również\nw udokumentowanych facts. Zapisuj fakty jako \"według X...\" albo \"w badaniu X...\".\nNie przedstawiaj zarzutów ani deklaracji strony jako ustalonej prawdy.\n"
+
+WRITE += """\nW trybie attributed nazwij origin.name.value dokładnie w podsumowaniu i pierwszym\nakapicie. Dla poll tytuł zawiera słowo Sondaż, dla innych podaj autora lub Według.\nWyraźnie przypisuj twierdzenia źródłu. Nie sugeruj niezależnego potwierdzenia.\nSondaż opisuje jedno badanie; nie prognozuj wyniku wyborów. Nie wymyślaj metodologii.\n"""
+VERIFY += """\nW trybie attributed nie wymagaj dwóch niezależnych relacji: sprawdź zamiast tego\nprawdziwe pochodzenie, dowody nazwy autora, atrybucję każdej istotnej tezy i notę\nprovenance_note. Sama zgodność przedruków nie dowodzi prawdziwości wydarzenia.\nSprawdź, że wspólna depesza nie została nazwana niezależnym potwierdzeniem,\na sondaż nie został przedstawiony jako pewny wynik wyborów. Sprawdź metodologię\nlub jawne oznaczenie jej braków. Nie zmieniaj rygoru tematów wysokiego ryzyka.\n"""
 
 class Gemini:
     def __init__(self, key):
@@ -490,9 +494,101 @@ class Gemini:
         return result
 
 
+
+def check_origin(dossier, docs):
+    mode = dossier.get("source_mode", "independent")
+    if mode not in ("independent", "attributed"):
+        raise Rejected("Nieznany tryb źródeł.")
+    if mode == "independent":
+        if dossier.get("independent") is not True:
+            raise Rejected("Dossier: brak niezależności. " +
+                           diagnostic_text(dossier.get("reason", "")))
+        return None
+    if dossier.get("independent") is not False:
+        raise Rejected("Relacja przypisana nie może deklarować niezależnego potwierdzenia.")
+    origin = dossier.get("origin")
+    if not isinstance(origin, dict) or origin.get("kind") not in ("poll", "dispatch", "statement"):
+        raise Rejected("Brak rozpoznanego źródła pierwotnego relacji.")
+    source_map = {d["id"]: d for d in docs}
+
+    def supported(field, label):
+        if not isinstance(field, dict):
+            raise Rejected("Brak danych pochodzenia: " + label)
+        value, evidence = field.get("value"), field.get("evidence")
+        if (not isinstance(value, str) or not 2 <= len(value) <= 180
+                or re.search(r'[<>\[\]\x60*\n\r]', value)):
+            raise Rejected("Niepoprawne dane pochodzenia: " + label)
+        if not isinstance(evidence, list) or not evidence:
+            raise Rejected("Brak dowodu pochodzenia: " + label)
+        for ev in evidence:
+            if not isinstance(ev, dict) or ev.get("source") not in source_map:
+                raise Rejected("Nieznane źródło dowodu pochodzenia.")
+            quote = ev.get("quote")
+            if (not isinstance(quote, str) or not 30 <= len(quote) <= 500
+                    or normalized(quote) not in normalized(source_map[ev["source"]]["text"])
+                    or normalized(value).casefold() not in normalized(quote).casefold()):
+                raise Rejected("Niepotwierdzone dane pochodzenia: " + label)
+        return value
+
+    supported(origin.get("name"), "autor badania/depeszy/komunikatu")
+    if origin["kind"] == "poll":
+        poll = origin.get("poll")
+        if not isinstance(poll, dict):
+            raise Rejected("Brak opisu metodologii sondażu.")
+        for key in ("commissioner", "fieldwork", "sample", "method"):
+            if key not in poll:
+                raise Rejected("Brak pola metodologii: " + key)
+            if poll[key] is not None:
+                supported(poll[key], key)
+    return origin
+
+
+def check_attribution(draft, dossier):
+    origin = dossier.get("origin") if dossier.get("source_mode") == "attributed" else None
+    if not origin:
+        return
+    name = normalized(origin["name"]["value"]).casefold()
+    lead = draft["sections"][0]["paragraphs"][0]["text"]
+    if any(name not in normalized(text).casefold() for text in (draft["summary"], lead)):
+        raise Rejected("Brak nazwy pierwotnego źródła w podsumowaniu lub pierwszym akapicie.")
+    title = normalized(draft["title"]).casefold()
+    if origin["kind"] == "poll":
+        if "sondaż" not in title:
+            raise Rejected("Tytuł musi oznaczać wynik jako sondaż.")
+    elif "według" not in title and name not in title:
+        raise Rejected("Tytuł relacji musi wskazywać pochodzenie informacji.")
+
+
+def origin_note(dossier):
+    origin = dossier.get("origin")
+    if dossier.get("source_mode") != "attributed" or not origin:
+        return ""
+    name = origin["name"]["value"]
+    evidence = origin["name"]["evidence"]
+    refs = " ".join(f'[{s}](#source-{s})' for s in sorted({e["source"] for e in evidence}))
+    text = ("**Pochodzenie informacji:** " + name + ". Relacja na podstawie wskazanych "
+            "publikacji; przedruki tego samego materiału nie są niezależnymi potwierdzeniami. " + refs)
+    if origin["kind"] == "poll":
+        labels = dict(commissioner="zleceniodawca", fieldwork="termin badania",
+                      sample="próba", method="metoda")
+        details = []
+        for key, label in labels.items():
+            field = origin["poll"][key]
+            if field is None:
+                details.append(label + ": nie podano w dostępnych materiałach")
+            else:
+                refs = " ".join(f'[{s}](#source-{s})' for s in sorted(
+                    {e["source"] for e in field["evidence"]}))
+                details.append(label + ": " + field["value"] + " " + refs)
+        text += "\n\n**Dane badania:** " + "; ".join(details) + "."
+        text += "\n\nWynik sondażu opisuje badanie opinii, nie wynik przyszłych wyborów."
+    return text + "\n\n"
+
+
 def check_dossier(dossier, docs):
-    if dossier.get("ready") is not True or dossier.get("independent") is not True:
+    if dossier.get("ready") is not True:
         raise Rejected("Dossier: ready=" + str(dossier.get("ready")) + ", independent=" + str(dossier.get("independent")) + ". Uzasadnienie modelu: " + diagnostic_text(dossier.get("reason", "Model nie podał przyczyny.")))
+    origin = check_origin(dossier, docs)
     facts = dossier.get("facts")
     if not isinstance(facts, list) or not 6 <= len(facts) <= 30:
         actual = len(facts) if isinstance(facts, list) else "niepoprawny format"
@@ -527,10 +623,12 @@ def check_dossier(dossier, docs):
             if normalized(fragment) not in normalized(source_map[ev["source"]]["text"]):
                 raise Rejected("Fragment dowodowy nie istnieje w źródle.")
             used.add(ev["source"])
-    if len({source_map[s]["group"] for s in used}) < 2:
+    if origin is None and len({source_map[s]["group"] for s in used}) < 2:
         raise Rejected("Fakty pochodzą od jednego wydawcy.")
     if dossier["high_risk"] and not any(source_map[s]["official"] for s in used):
         raise Rejected("Brak wykorzystanego dowodu pierwotnego.")
+    if origin is not None:
+        used.update(e["source"] for e in origin["name"]["evidence"])
     return {f["id"]: f for f in facts}
 
 
@@ -555,7 +653,7 @@ def article_policy(facts, docs):
                 fact_count=count, source_words=source_words)
 
 
-def check_draft(draft, facts, docs):
+def check_draft(draft, facts, docs, dossier=None):
     policy = article_policy(facts, docs)
     if draft.get("publish") is not True:
         raise Rejected("Model odmówił napisania tekstu przy dostępnym materiale.")
@@ -602,12 +700,19 @@ def check_draft(draft, facts, docs):
     if set(re.findall(r"\d+(?:[.,]\d+)?", " ".join(passages))) - numbers:
         raise Rejected("Liczba niewystępująca w materiałach.")
     sources = {e["source"] for f in used for e in facts[f]["evidence"]}
-    if len({d["group"] for d in docs if d["id"] in sources}) < 2:
+    if (not dossier or dossier.get("source_mode", "independent") == "independent") and len({d["group"] for d in docs if d["id"] in sources}) < 2:
         raise Rejected("Tekst nie wykorzystuje dwóch wydawców.")
+    if dossier and dossier.get("source_mode") == "attributed":
+        origin = check_origin(dossier, docs)
+        check_attribution(draft, dossier)
+        fields = [origin["name"]] + list(origin.get("poll", {}).values())
+        for field in fields:
+            if field is not None:
+                sources.update(e["source"] for e in field["evidence"])
     return length, sources
 
 
-def render_markdown(draft, facts):
+def render_markdown(draft, facts, dossier=None):
     def citations(refs):
         sources = sorted({e["source"] for f in refs for e in facts[f]["evidence"]},
                          key=lambda x: int(x[1:]))
@@ -617,7 +722,7 @@ def render_markdown(draft, facts):
         parts.append("## " + section["heading"])
         for paragraph in section["paragraphs"]:
             parts.append(paragraph["text"] + " " + citations(paragraph["facts"]))
-    return "\n\n".join(parts) + "\n"
+    return origin_note(dossier or {}) + "\n\n".join(parts) + "\n"
 
 def diagnostic_text(value, limit=900):
     """Keep model/source text inert in logs and redact the configured key."""
@@ -664,8 +769,9 @@ def prepare_article(ai, reader, topics, diagnostics):
                 raise Rejected("Za mało wywołań API na tekst i wszystkie wymagane kontrole "
                                "(w tym kontrolę wysokiego ryzyka).")
             draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
-            length, used = check_draft(draft, facts, docs)
-            verification = dict(documents=docs, dossier=dossier, article=draft, length_policy=policy)
+            length, used = check_draft(draft, facts, docs, dossier)
+            verification = dict(documents=docs, dossier=dossier, article=draft, length_policy=policy,
+                                provenance_note=origin_note(dossier))
             review_result(ai.ask(VERIFY, verification, tokens=4096))
             if dossier["high_risk"]:
                 review_result(ai.ask(

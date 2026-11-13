@@ -1,57 +1,63 @@
-Sygnał Dnia — poprawka 2.3: długość dopasowana do materiału
+Sygnał Dnia — poprawka 2.4: niezależne relacje i jedno nazwane źródło
 
 WGRANIE
-1. Rozpakuj Sygnal_Dnia_poprawka_2_3.zip.
-2. Otwórz https://github.com/k0fa/sygnal-dnia
-3. Add file → Upload files.
-4. Wgraj trzy pliki bezpośrednio do katalogu głównego:
-   generator.py, newsroom.py, test_pipeline.py.
-   Zastąp poprzednie wersje pod dokładnie tymi samymi nazwami.
-5. Commit changes.
-6. Po zakończeniu uruchomienia wywołanego zmianą kodu:
+1. Rozpakuj ZIP.
+2. https://github.com/k0fa/sygnal-dnia → Add file → Upload files.
+3. Wgraj generator.py, newsroom.py i test_pipeline.py do katalogu głównego.
+   Zachowaj dokładne nazwy; zastąp poprzednie pliki.
+4. Commit changes.
+5. Po zakończeniu uruchomienia wywołanego zmianą kodu wybierz:
    Actions → Generate and publish news → Run workflow → main → Run workflow.
-   Nie wybieraj Re-run starego uruchomienia.
-Nie zmieniaj klucza GEMINI_API_KEY, modelu ani workflow. Zachowaj historię i artykuły.
+Nie zmieniaj sekretu, modelu, workflow ani historii opublikowanych materiałów.
 
-ZASADY DOBORU DŁUGOŚCI
-Skrypt najpierw sprawdza dossier i dowody, następnie wyznacza zakres:
-- krótka wiadomość: 180–300 słów; minimum 6 udokumentowanych faktów
-  i 300 słów wykorzystanych materiałów;
-- artykuł: 300–550 słów; minimum 10 faktów i 650 słów wykorzystanych materiałów;
-- długi artykuł: 600–1000 słów; minimum 16 faktów i 1200 słów wykorzystanych materiałów.
-Wybierany jest najwyższy spełniony zakres. Liczone są źródła przywołane w dowodach.
-Przykład: 708 słów materiałów i 10 faktów pozwala na 300–550 słów artykułu;
-708 słów i 6 faktów — na krótką wiadomość. Nie oznacza to automatycznej publikacji.
+CO ZMIENIONO
+Dossier rozróżnia:
+- independent: rzeczywiście niezależne relacje, nadal wymagane dwie grupy wydawców;
+- attributed: opis jednego nazwanego sondażu, depeszy lub komunikatu.
+  Nie jest on przedstawiany jako niezależnie potwierdzone wydarzenie.
 
-Odrzucono dawny sztywny próg 800 słów oraz wymóg minimum 12 faktów dla każdego tekstu.
-Pojedyncze źródło musi mieć minimum 120 słów, więc relacja licząca 213 słów
-nie odpada wyłącznie z powodu długości. Utrzymano minimum dwóch grup wydawców,
-odrzucanie silnie podobnych tekstów i ocenę niezależności relacji przez model.
+Samo independent=false nie wystarcza do publikacji. Model musi wskazać tryb
+attributed, rodzaj materiału i nazwę pracowni/agencji/autora komunikatu,
+popartą dokładnym fragmentem pobranego tekstu. Nazwa i dowody są sprawdzane
+w kodzie, a ich znaczenie i poprawność dodatkowo przez model w końcowej ocenie.
+Gdy pochodzenia nie można ustalić, publikacja nadal jest wstrzymana.
 
-PRZEBIEG
-Gemini wyodrębnia 6–30 odrębnych faktów, każdy z fragmentem rzeczywistego źródła.
-Nie wolno sztucznie dzielić jednego faktu, powtarzać informacji lub dopisywać wiedzy.
-Identyczne opisy faktów są odrzucane przez kod; podobieństwo znaczeniowe ocenia model.
-Instrukcja pisania otrzymuje konkretne limity wyznaczone przez kod.
-Walidacja artykułu samodzielnie wylicza ten sam zakres i sprawdza długość.
-Każdy tekst przechodzi końcową kontrolę zgodności ze źródłami.
-Tematy wysokiego ryzyka nadal wymagają odpowiedniego źródła urzędowego
-i dodatkowej kontroli. Limit pozostaje: 5 żądań API i 1 artykuł na cykl.
-Po odrzuceniu tematu następny jest podejmowany, jeśli starczy limitu na kontrole.
+Nazwa pierwotnego źródła musi wystąpić w podsumowaniu i pierwszym akapicie.
+Tytuł sondażu musi zawierać słowo „sondaż”. Inne relacje muszą wskazać
+nazwę źródła lub formułę „według”. Sprawdzenie semantyczne ocenia atrybucję
+twierdzeń i odrzuca sugerowanie niezależnego potwierdzenia przedruków.
 
-DODATKOWE POPRAWKI
-W obu parserach uwzględniono atrybuty HTML bez wartości, które wcześniej powodowały
-AttributeError. Zachowano odczyt articleBody i diagnostykę każdego źródła.
-Komunikat o niewłaściwej liczbie faktów pokazuje rzeczywistą liczbę i uzasadnienie.
-Podsumowanie udanej publikacji pokazuje format tekstu, liczbę faktów i długość.
+W artykule pojawia się nota „Pochodzenie informacji” z przypisami.
+Nie sugeruje ona, że pobrano oryginalną depeszę: informuje o opracowaniu
+na podstawie wskazanych publikacji.
 
-TESTY I OGRANICZENIA
-Wszystkie 42 testy lokalne zaliczone; brak pominiętych testów.
-Zainstalowano istniejące zależności z requirements.txt w odizolowanym katalogu testów.
-Testowano na Python 3.15, podczas gdy dotychczasowy workflow używa Python 3.12.
-Testy obejmują zakresy długości, 708 słów źródeł, sześć faktów, granice zakresów,
-zapis krótkiego i długiego tekstu, budowę HTML, odtwarzanie historii, limity API,
-odrzucenia i puste atrybuty HTML. Testy używają atrap odpowiedzi API.
-Nie uruchomiono Gemini z Twoim kluczem ani nie zmieniono Twojego repozytorium.
-Kod nie gwarantuje publikacji w każdym cyklu ani nie zastępuje weryfikacji człowieka.
-Nie dodano płatnego wyszukiwania, nowych usług ani nowych zależności produkcyjnych.
+SONDAŻE
+Pracownia badawcza jest wymagana i musi być wskazana w materiale.
+Zleceniodawca, termin, próba oraz metoda są podawane z dowodami lub
+oznaczone „nie podano w dostępnych materiałach”. Braki nie są uzupełniane
+z pamięci modelu. Publikacja wyjaśnia, że sondaż nie jest wynikiem przyszłych wyborów.
+Jeśli brak metodologii uniemożliwia rzetelny opis konkretnej tezy, kontrola końcowa
+nadal może odrzucić artykuł.
+
+POZOSTAŁE ZASADY
+Wybór tematów nadal zaczyna się od grup 2–5 pozycji RSS z co najmniej dwóch
+grup wydawców. Po usunięciu mocno powielonych tekstów może pozostać jeden materiał.
+Kod dopuszcza wtedy wyłącznie zweryfikowaną relację attributed; pojedynczy tekst
+nie przejdzie jako niezależne potwierdzenie.
+Minimum 300 słów materiału i 6 udokumentowanych faktów nadal obowiązuje.
+Długość 180–300, 300–550 lub 600–1000 słów jest dobierana jak w wersji 2.3.
+Maksymalnie 5 wywołań API i 1 artykuł w cyklu.
+Tematy wysokiego ryzyka nadal wymagają adekwatnego dokumentu urzędowego
+i dodatkowej kontroli. Nie wystarcza samo nazwanie depeszy.
+
+SPRAWDZENIE
+53 testy zaliczone lokalnie na Python 3.15, bez pominiętych testów.
+Testy obejmują nowe tryby, fałszywą nazwę źródła, fałszywą metodologię,
+brak atrybucji, źródło po usunięciu duplikatów, wysokie ryzyko,
+zapis artykułów i obecność noty oraz przypisów na stronie HTML.
+Testy używają atrap odpowiedzi API, nie klucza użytkownika.
+Dotychczasowy workflow używa Python 3.12; wynik jego uruchomienia potwierdzi
+działanie w środowisku użytkownika. Nie zmieniono repozytorium zdalnego.
+Nie dodano płatnego wyszukiwania ani nowych zależności.
+To automatyczna kontrola zgodności z materiałami, nie gwarancja prawdziwości
+informacji. Publikacja może zostać wstrzymana.
