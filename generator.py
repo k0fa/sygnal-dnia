@@ -57,8 +57,8 @@ def select_topics(ai, queue, records, diagnostics=None):
         label = diagnostic_text(topic.get("label", ""), 180)
         prefix += label + ": " if label else ""
         ids = topic.get("ids")
-        if not isinstance(ids, list) or not 2 <= len(ids) <= 5:
-            audit.append(prefix + "odrzucona — wymagane 2–5 identyfikatorów.")
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 5:
+            audit.append(prefix + "odrzucona — wymagane 1–5 identyfikatorów.")
             continue
         resolved = [aliases.get(i.strip(), i.strip()) if isinstance(i, str) else None for i in ids]
         if any(i not in lookup for i in resolved):
@@ -71,8 +71,7 @@ def select_topics(ai, queue, records, diagnostics=None):
         items = [lookup[i] for i in resolved]
         publishers = {source_group(i["url"]) for i in items}
         if len(publishers) < 2:
-            audit.append(prefix + "odrzucona — jedna grupa wydawnicza: " + ", ".join(publishers))
-            continue
+            audit.append(prefix + "jedna grupa wydawnicza — wymagana późniejsza weryfikacja pochodzenia attributed.")
         if any(duplicate(i, records) for i in items):
             audit.append(prefix + "odrzucona — temat już opublikowany.")
             continue
@@ -104,7 +103,7 @@ def run():
     if not queue:
         raise Rejected("Brak nowych tematów RSS.")
     ai = Gemini(key)
-    logging.info("Wersja 2.10: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
+    logging.info("Wersja 2.13: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
     selection_audit = []
     topics = select_topics(ai, queue, records, selection_audit)
     if not topics:

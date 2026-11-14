@@ -482,7 +482,9 @@ Nie kopiuj zdań 1:1. Odpowiadaj wyłącznie poprawnym obiektem JSON."""
 SELECT = """Wybierz maksymalnie 3 konkretne aktualne wydarzenia z listy RSS.
 Grupuj materiały o TYM SAMYM wydarzeniu, a nie szerokiej kategorii.
 Szukaj wspólnego zdarzenia, osób/instytucji i czasu, także przy różnych nagłówkach.
-Każda grupa: 2–5 różnych identyfikatorów id, minimum dwóch publisher_group.
+Każda grupa: 1–5 różnych identyfikatorów id. Preferuj dwa publisher_group.
+Pojedynczy artykuł też może być kandydatem: po pobraniu tekstu musi przejść
+kontrolę pochodzenia attributed, dowodów i wystarczającej ilości materiału.
 Różne serwisy Interii/GeekWeek to jeden wydawca. Nie powtarzaj tematów z recent.
 Na tym etapie oceniasz wyłącznie zgodność tematów: niezależność relacji, długość
 dostępnych tekstów i siła dowodów będą sprawdzane później po pobraniu artykułów.
@@ -594,7 +596,7 @@ kulturalnym, transporcie lub opublikowanych danych gospodarczych, jeśli RSS
 daje podstawy do spójnego opisu. Przykłady: przywrócenie usługi, premiera,
 wynik badania, publikacja danych instytucji. Nie chodzi o porady inwestycyjne
 lub zdrowotne, zagrożenia bezpieczeństwa ani niepotwierdzone zarzuty.
-Jeśli jest choć jedna taka grupa spełniająca warunek dwóch wydawców,
+Jeśli jest choć jedna taka grupa nadająca się do weryfikacji pochodzenia,
 umieść ją jako pierwszą. Kolejne miejsca również wypełniaj takimi grupami,
 jeśli są dostępne. Dopiero potem rozważ wojnę, ofiary i oskarżenia.
 Nie wybieraj samych sensacyjnych tematów, gdy lista zawiera możliwe do

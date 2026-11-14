@@ -1,17 +1,16 @@
-Sygnał Dnia 2.12 — wybór tematów
+Sygnał Dnia 2.13
 
-Dla zainstalowanej wersji 2.10 (bez diagnostyki 2.11).
-Rozpakuj ZIP. W GitHub wybierz Code -> Add file -> Upload files.
-Podmień tylko newsroom.py w głównym katalogu i zapisz Commit changes.
-Uruchom Actions -> Generate and publish news -> Run workflow -> main.
+Rozpakuj ZIP. GitHub: Code -> Add file -> Upload files.
+Podmień generator.py, newsroom.py, test_pipeline.py w głównym katalogu.
+Commit changes, następnie Actions -> Generate and publish news -> Run workflow -> main.
 
-Zmiana: instrukcja selekcji wymaga przeglądnięcia wszystkich kandydatów
-i ustawienia możliwych do opracowania tematów mniej ryzykownych przed
-wojną i oskarżeniami. To priorytet wyboru, nie zakaz tych kategorii.
-Kontrole dowodów i tematów wysokiego ryzyka nadal obowiązują.
-Nie zwiększono limitu zapytań. Działanie zależy od wiadomości w RSS
-i odpowiedzi modelu; nie gwarantuje publikacji w każdym cyklu.
-Nie zmieniaj klucza API ani działającego modelu.
-
-Zmiana dotyczy instrukcji dla modelu. Sprawdzono składnię Python.
-Nie wykonano testu z rzeczywistym API.
+Selekcja dopuszcza 1–5 materiałów, również od jednego wydawcy.
+To dopuszczenie do badania, a nie zgoda na publikację. Pojedynczy materiał
+musi później przejść kontrolę nazwanego pochodzenia attributed i dowodów.
+Dwie niezależne relacje nadal są wymagane w trybie independent.
+Zachowano minimalną ilość materiału i rozszerzone kontrole wysokiego ryzyka.
+Log nie zawiera listy ID Euclid, więc nie przesądza, czy przyczyną był
+jeden ID czy inna niepoprawna postać pola ids.
+Poprawka usuwa potwierdzoną niespójność wymagań selekcji i dossier.
+105 testów offline przeszło. Nie wykonano próby rzeczywistego API.
+Nie ma gwarancji publikacji konkretnego artykułu o Euclid.

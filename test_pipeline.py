@@ -780,16 +780,21 @@ class TopicSelectionRegressionTests(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertIn("powtórzone identyfikatory", " ".join(audit))
 
-    def test_same_publisher_is_rejected(self):
+    def test_same_publisher_candidate_reaches_later_provenance_check(self):
         queue = self.candidates()
         queue[0]["url"] = "https://wydarzenia.interia.pl/test"
         queue[1]["url"] = "https://biznes.interia.pl/other"
         result, audit, _ = self.select({"topics": [{"ids": ["N1", "N2"]}]}, queue=queue)
-        self.assertEqual(result, [])
-        self.assertIn("jedna grupa wydawnicza", " ".join(audit))
+        self.assertEqual(len(result), 1)
+        self.assertIn("attributed", " ".join(audit))
+
+    def test_single_candidate_is_not_rejected_before_research(self):
+        result, _, _ = self.select({"topics": [{"ids": ["N1"]}]})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0]["id"], "hash1")
 
     def test_valid_group_after_invalid_groups_is_considered(self):
-        result, audit, _ = self.select({"topics": [None, {}, {"ids": ["N1"]}, {"ids": ["N1", "N2"]}]})
+        result, _, _ = self.select({"topics": [None, {}, {"ids": []}, {"ids": ["N1", "N2"]}]})
         self.assertEqual(len(result), 1)
 
     def test_duplicate_group_is_not_retried(self):
