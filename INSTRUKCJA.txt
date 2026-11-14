@@ -1,12 +1,11 @@
-Sygnał Dnia 2.14
-
+Sygnał Dnia 2.15
 Rozpakuj ZIP. GitHub: Code -> Add file -> Upload files.
-Podmień generator.py, newsroom.py, test_pipeline.py. Zapisz Commit changes.
+Podmień generator.py, newsroom.py, test_pipeline.py. Commit changes.
 Actions -> Generate and publish news -> Run workflow -> main.
 
-Po wykryciu sekwencji 12 słów ze źródła program raz prosi o przeredagowanie.
-Zmieniony artykuł przechodzi ponownie wszystkie kontrole oraz końcową ocenę.
-Limit 5 wywołań pozostaje aktywny. Przeredagowanie następuje tylko gdy
-pozostaje budżet na nie i wymagane kontrole. Kolejny błąd zatrzymuje publikację.
-Nie zmieniaj działającego modelu ani klucza.
-110 testów offline przeszło. Nie sprawdzono rzeczywistego API.
+Kontrola wskazuje teraz konkretne liczby bez zgodnego zapisu w źródłach.
+Jedna korekta artykułu obejmuje także takie liczby. Model otrzymuje
+źródła i błąd. Po korekcie obowiązują wszystkie kontrole i końcowa weryfikacja.
+Nie zwiększono limitu 5 zapytań. Nie dodano automatycznej akceptacji przeliczeń
+ani różnych zapisów liczb; wymagają poprawy lub oceny na podstawie źródła.
+112 testów offline przeszło; rzeczywiste API nie było testowane.

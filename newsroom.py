@@ -33,6 +33,10 @@ class CopiedPassage(Rejected):
     """Draft contains a verbatim source passage."""
 
 
+class UnsupportedNumber(Rejected):
+    """A numeric token is absent from sources; semantic review is still required."""
+
+
 class APIError(RuntimeError):
     """API/configuration failure; must be visible in Actions."""
 
@@ -950,8 +954,11 @@ def check_draft(draft, facts, docs, dossier=None):
     if ngrams(" ".join(passages), 12) & ngrams(source_text, 12):
         raise CopiedPassage("Wykryto dosłowną sekwencję 12 słów.")
     numbers = set(re.findall(r"\d+(?:[.,]\d+)?", source_text))
-    if set(re.findall(r"\d+(?:[.,]\d+)?", " ".join(passages))) - numbers:
-        raise Rejected("Liczba niewystępująca w materiałach.")
+    unmatched = set(re.findall(r"\d+(?:[.,]\d+)?", " ".join(passages))) - numbers
+    if unmatched:
+        raise UnsupportedNumber("Liczby bez zgodnego zapisu w źródłach: " +
+                                ", ".join(sorted(unmatched)) +
+                                ". Zweryfikuj wartość, jednostkę i sposób zapisu.")
     sources = {e["source"] for f in used for e in facts[f]["evidence"]}
     if (not dossier or dossier.get("source_mode", "independent") == "independent") and len({d["group"] for d in docs if d["id"] in sources}) < 2:
         raise Rejected("Tekst nie wykorzystuje dwóch wydawców.")
@@ -1032,20 +1039,23 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
     draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
     try:
         length, used = check_draft(draft, facts, docs, dossier)
-    except CopiedPassage:
+    except (CopiedPassage, UnsupportedNumber) as exc:
         # One rewrite, then normal review(s); never spend their reserved budget.
         required = 3 if dossier["high_risk"] else 2
         if 5 - ai.calls < required:
             raise
-        entry["rewrite"] = "Przeredagowanie po wykryciu sekwencji 12 słów ze źródła."
+        entry["rewrite"] = diagnostic_text(exc)
         logging.info(entry["rewrite"])
-        draft = ai.ask(WRITE + "\nPRZEREDAGOWANIE: poprzednia wersja zawiera dosłowną "
-                       "sekwencję 12 słów ze źródła. Napisz ją ponownie własnymi słowami, "
+        draft = ai.ask(WRITE + "\nKOREKTA: usuń błąd podany w validation_error. "
+                       "Jeśli błąd dotyczy liczby, sprawdź jej wartość i jednostkę w documents. "
+                       "Użyj zapisu ze źródła. Usuń niepopartą tezę; nie zastępuj liczby dowolną "
+                       "inną występującą w źródle. Nie wykonuj nowych obliczeń. "
+                       "Jeśli błąd dotyczy kopiowania, napisz tekst własnymi słowami, "
                        "zmieniając budowę zdań. Zachowaj fakty, liczby, nazwy, atrybucję "
                        "i powiązania z faktami. Nie używaj synonimów zmieniających znaczenie "
                        "ani nie dodawaj informacji. Zwróć cały artykuł w wymaganym JSON.",
                        dict(dossier=dossier, documents=docs, previous_article=draft,
-                            length_policy=policy), tokens=12288)
+                            validation_error=str(exc), length_policy=policy), tokens=12288)
         length, used = check_draft(draft, facts, docs, dossier)
     return draft, length, used
 

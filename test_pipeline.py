@@ -105,7 +105,7 @@ class EditorialTests(unittest.TestCase):
     def test_invented_number_is_rejected(self):
         docs, dossier, draft = fixture()
         draft["title"] += " 99999"
-        with self.assertRaisesRegex(n.Rejected, "Liczba"):
+        with self.assertRaisesRegex(n.UnsupportedNumber, "99999"):
             n.check_draft(draft, n.check_dossier(dossier, docs), docs)
 
     def test_short_article_is_rejected(self):
@@ -1042,6 +1042,36 @@ class RewriteTests(unittest.TestCase):
         ai.calls = 2
         with patch.object(n, "check_draft", side_effect=n.CopiedPassage("Powielony tekst")):
             with self.assertRaises(n.CopiedPassage):
+                n.checked_draft(ai, dossier, {}, docs, {}, {})
+        self.assertEqual(ai.calls, 3)
+
+
+
+class NumberCorrectionTests(unittest.TestCase):
+    def test_numeric_correction_has_error_and_sources(self):
+        docs, dossier, draft = fixture()
+        ai = RetryTests().client([draft, copy.deepcopy(draft)])
+        original = ai.ask
+        ai.ask = MagicMock(side_effect=original)
+        real_check = n.check_draft
+        count = []
+        def check(*args):
+            count.append(1)
+            if len(count) == 1:
+                raise n.UnsupportedNumber("Liczby bez zgodnego zapisu w źródłach: 999999.")
+            return real_check(*args)
+        facts = n.check_dossier(dossier, docs)
+        with patch.object(n, "check_draft", side_effect=check):
+            n.checked_draft(ai, dossier, facts, docs, n.article_policy(facts, docs), {})
+        data = ai.ask.call_args.args[1]
+        self.assertIn("999999", data["validation_error"])
+        self.assertEqual(data["documents"], docs)
+
+    def test_persistent_unsupported_number_is_rejected(self):
+        docs, dossier, draft = fixture()
+        ai = RetryTests().client([draft, draft])
+        with patch.object(n, "check_draft", side_effect=n.UnsupportedNumber("999999")):
+            with self.assertRaises(n.UnsupportedNumber):
                 n.checked_draft(ai, dossier, {}, docs, {}, {})
         self.assertEqual(ai.calls, 3)
 
