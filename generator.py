@@ -23,30 +23,70 @@ def report(status, message, **extra):
             stream.write("~~~~text\n" + message.replace("~", "").replace("<", "&lt;").replace(">", "&gt;")[:10000] + "\n~~~~\n")
 
 
-def select_topics(ai, queue, records):
+def select_topics(ai, queue, records, diagnostics=None):
+    audit = diagnostics if diagnostics is not None else []
+    audit.clear()
     lookup = {item["id"]: item for item in queue}
-    response = ai.ask(SELECT, dict(
-        candidates=[{k: item[k] for k in ("id", "title", "summary", "source", "published")}
-                    for item in queue],
-        recent=[r["title"] for r in records[-80:]]), tokens=4096)
+    # Short labels reduce identifier copying errors without changing stored IDs.
+    aliases = {f"N{i}": item["id"] for i, item in enumerate(queue, 1)}
+    candidates = []
+    for alias, original in aliases.items():
+        item = lookup[original]
+        candidate = {k: item[k] for k in ("title", "summary", "source", "published")}
+        candidate.update(id=alias, publisher_group=source_group(item["url"]))
+        candidates.append(candidate)
+    groups = sorted({c["publisher_group"] for c in candidates})
+    audit.append(f"Wejście: {len(candidates)} wiadomości; grupy wydawców: {', '.join(groups)}.")
+    response = ai.ask(SELECT, dict(candidates=candidates,
+                      recent=[r["title"] for r in records[-80:]]), tokens=4096)
     topics = response.get("topics")
     if not isinstance(topics, list):
-        raise Rejected("Niepoprawny wynik wyboru tematów.")
-    selected = []
-    for topic in topics[:3]:
+        raise Rejected("Wybór tematów: odpowiedź nie zawiera listy topics.")
+    audit.append(f"Gemini zaproponowało grup: {len(topics)}.")
+    if not topics:
+        reason = response.get("reason")
+        audit.append("Uzasadnienie Gemini: " + diagnostic_text(reason if isinstance(reason, str)
+                     and reason.strip() else "Model nie podał uzasadnienia.", 1200))
+    selected, seen_groups = [], set()
+    # Validate all returned groups, then retain up to three valid groups.
+    for index, topic in enumerate(topics[:20], 1):
+        prefix = f"Grupa {index}: "
         if not isinstance(topic, dict):
+            audit.append(prefix + "odrzucona — niepoprawny format grupy.")
             continue
+        label = diagnostic_text(topic.get("label", ""), 180)
+        prefix += label + ": " if label else ""
         ids = topic.get("ids")
-        if (not isinstance(ids, list) or not 2 <= len(ids) <= 5
-                or any(not isinstance(i, str) or i not in lookup for i in ids)
-                or len(set(ids)) != len(ids)):
+        if not isinstance(ids, list) or not 2 <= len(ids) <= 5:
+            audit.append(prefix + "odrzucona — wymagane 2–5 identyfikatorów.")
             continue
-        items = [lookup[i] for i in ids]
-        if len({source_group(i["url"]) for i in items}) < 2:
+        resolved = [aliases.get(i.strip(), i.strip()) if isinstance(i, str) else None for i in ids]
+        if any(i not in lookup for i in resolved):
+            audit.append(prefix + "odrzucona — nieznane identyfikatory: " +
+                         diagnostic_text(repr(ids), 300))
+            continue
+        if len(set(resolved)) != len(resolved):
+            audit.append(prefix + "odrzucona — powtórzone identyfikatory.")
+            continue
+        items = [lookup[i] for i in resolved]
+        publishers = {source_group(i["url"]) for i in items}
+        if len(publishers) < 2:
+            audit.append(prefix + "odrzucona — jedna grupa wydawnicza: " + ", ".join(publishers))
             continue
         if any(duplicate(i, records) for i in items):
+            audit.append(prefix + "odrzucona — temat już opublikowany.")
             continue
+        signature = tuple(sorted(resolved))
+        if signature in seen_groups:
+            audit.append(prefix + "pominięta — powtórzona grupa.")
+            continue
+        seen_groups.add(signature)
         selected.append(items)
+        audit.append(prefix + "przyjęta; " + ", ".join(publishers))
+        if len(selected) == 3:
+            break
+    for entry in audit:
+        logging.info("Wybór tematów: %s", entry)
     return selected
 
 
@@ -64,10 +104,11 @@ def run():
     if not queue:
         raise Rejected("Brak nowych tematów RSS.")
     ai = Gemini(key)
-    logging.info("Wersja 2.6: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
-    topics = select_topics(ai, queue, records)
+    logging.info("Wersja 2.7: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
+    selection_audit = []
+    topics = select_topics(ai, queue, records, selection_audit)
     if not topics:
-        raise Rejected("Brak materiałów o jednym wydarzeniu od dwóch wydawców.")
+        raise Rejected("Nie wybrano tematu do opracowania.\n" + "\n".join(selection_audit))
     reader = Reader()
     diagnostics = []
     chosen, docs, dossier, facts, draft, length, used_sources = prepare_article(

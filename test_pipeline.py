@@ -736,5 +736,71 @@ class SourceRelevanceRegressionTests(unittest.TestCase):
                     n.evidence_quote(quote, "x" * 3000, "F1/S1")
 
 
+
+class TopicSelectionRegressionTests(unittest.TestCase):
+    def candidates(self):
+        return [dict(id="hash1", title="Konkretny temat numer jeden",
+                     summary="Dłuższy opis wydarzenia dla pierwszego wydawcy.",
+                     source="Onet", published="2026-11-14", url="https://wiadomosci.onet.pl/test"),
+                dict(id="hash2", title="Inny nagłówek o tym samym wydarzeniu",
+                     summary="Dłuższy opis wydarzenia dla drugiego wydawcy.",
+                     source="WP", published="2026-11-14", url="https://wiadomosci.wp.pl/test")]
+
+    def select(self, response, queue=None, records=None):
+        import generator as g
+        ai = MagicMock()
+        ai.ask.return_value = response
+        audit = []
+        result = g.select_topics(ai, queue or self.candidates(), records or [], audit)
+        return result, audit, ai
+
+    def test_short_ids_resolve_to_original_records(self):
+        result, audit, ai = self.select({"topics": [{"ids": ["N1", "N2"]}]})
+        self.assertEqual([i["id"] for i in result[0]], ["hash1", "hash2"])
+        sent = ai.ask.call_args.args[1]["candidates"]
+        self.assertEqual([i["id"] for i in sent], ["N1", "N2"])
+        self.assertNotEqual(sent[0]["publisher_group"], sent[1]["publisher_group"])
+
+    def test_original_ids_still_accepted(self):
+        result, _, _ = self.select({"topics": [{"ids": ["hash1", "hash2"]}]})
+        self.assertEqual(len(result), 1)
+
+    def test_empty_result_explains_model_reason(self):
+        result, audit, _ = self.select({"topics": [], "reason": "Tematy dotyczą innych wydarzeń."})
+        self.assertEqual(result, [])
+        self.assertIn("Tematy dotyczą innych wydarzeń.", " ".join(audit))
+
+    def test_unknown_ids_are_diagnosed(self):
+        result, audit, _ = self.select({"topics": [{"ids": ["N1", "N999"]}]})
+        self.assertEqual(result, [])
+        self.assertIn("nieznane identyfikatory", " ".join(audit))
+
+    def test_repeated_id_is_not_two_sources(self):
+        result, audit, _ = self.select({"topics": [{"ids": ["N1", "N1"]}]})
+        self.assertEqual(result, [])
+        self.assertIn("powtórzone identyfikatory", " ".join(audit))
+
+    def test_same_publisher_is_rejected(self):
+        queue = self.candidates()
+        queue[0]["url"] = "https://wydarzenia.interia.pl/test"
+        queue[1]["url"] = "https://biznes.interia.pl/other"
+        result, audit, _ = self.select({"topics": [{"ids": ["N1", "N2"]}]}, queue=queue)
+        self.assertEqual(result, [])
+        self.assertIn("jedna grupa wydawnicza", " ".join(audit))
+
+    def test_valid_group_after_invalid_groups_is_considered(self):
+        result, audit, _ = self.select({"topics": [None, {}, {"ids": ["N1"]}, {"ids": ["N1", "N2"]}]})
+        self.assertEqual(len(result), 1)
+
+    def test_duplicate_group_is_not_retried(self):
+        result, _, _ = self.select({"topics": [{"ids": ["N1", "N2"]}, {"ids": ["N2", "N1"]}]})
+        self.assertEqual(len(result), 1)
+
+    def test_published_topic_is_rejected(self):
+        result, audit, _ = self.select({"topics": [{"ids": ["N1", "N2"]}]}, records=self.candidates()[:1])
+        self.assertEqual(result, [])
+        self.assertIn("już opublikowany", " ".join(audit))
+
+
 if __name__ == "__main__":
     unittest.main()
