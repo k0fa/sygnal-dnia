@@ -586,6 +586,26 @@ def parse_model_json(text):
     return result
 
 
+SELECT += """
+KOLEJNOŚĆ PRACY PRZY OGRANICZONYM BUDŻECIE:
+Przejrzyj całą listę kandydatów przed wybraniem tematów.
+Najpierw wybieraj grupy o konkretnym wydarzeniu technologicznym, naukowym,
+kulturalnym, transporcie lub opublikowanych danych gospodarczych, jeśli RSS
+daje podstawy do spójnego opisu. Przykłady: przywrócenie usługi, premiera,
+wynik badania, publikacja danych instytucji. Nie chodzi o porady inwestycyjne
+lub zdrowotne, zagrożenia bezpieczeństwa ani niepotwierdzone zarzuty.
+Jeśli jest choć jedna taka grupa spełniająca warunek dwóch wydawców,
+umieść ją jako pierwszą. Kolejne miejsca również wypełniaj takimi grupami,
+jeśli są dostępne. Dopiero potem rozważ wojnę, ofiary i oskarżenia.
+Nie wybieraj samych sensacyjnych tematów, gdy lista zawiera możliwe do
+opracowania tematy mniej ryzykowne. Nie traktuj samej kategorii portalu
+jako oceny ryzyka: awaria z zagrożeniem życia nadal może być wysokiego ryzyka.
+Nie zaniżaj oceny ryzyka, nie wymyślaj tematów ani dostępności dokumentów.
+Brak grupy spełniającej warunki nadal oznacza pustą listę.
+W polu reason krótko uzasadnij kolejność i zaznacz, jeśli nie znaleziono
+żadnego odpowiedniego tematu o niższym ryzyku.
+"""
+
 class Gemini:
     def __init__(self, key):
         self.key = key

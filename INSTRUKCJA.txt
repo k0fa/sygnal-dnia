@@ -1,25 +1,17 @@
-Sygnał Dnia — poprawka 2.10 dla instalacji 2.9
+Sygnał Dnia 2.12 — wybór tematów
 
-1. Rozpakuj ZIP.
-2. GitHub: Code -> Add file -> Upload files.
-3. Podmień w głównym katalogu generator.py, newsroom.py, test_pipeline.py.
-4. Commit changes.
-5. Actions -> Generate and publish news -> Run workflow -> main -> Run workflow.
-Nie wybieraj Re-run starego uruchomienia po zmianie plików.
+Dla zainstalowanej wersji 2.10 (bez diagnostyki 2.11).
+Rozpakuj ZIP. W GitHub wybierz Code -> Add file -> Upload files.
+Podmień tylko newsroom.py w głównym katalogu i zapisz Commit changes.
+Uruchom Actions -> Generate and publish news -> Run workflow -> main.
 
-Zmiany:
-- Parser akceptuje jeden obiekt JSON, także w pojedynczym bloku Markdown.
-- Usuwa znacznik BOM i zewnętrzne białe znaki.
-- Nie naprawia samodzielnie uszkodzonych danych ani nie zgaduje brakujących pól.
-- Powtórzone klucze, NaN, wiele obiektów i tekst poza JSON są odrzucane.
-- Jedno ponowienie niepoprawnego JSON dla danego zapytania, tylko jeśli pozostał
-  budżet w limicie 5 wywołań na cykl. Zwykłe reguły odstępów nadal obowiązują.
-- Ponowienie otrzymuje oryginalne dane i instrukcję poprawnego formatowania.
-- Ponowienia zużywają budżet: mogą pozostawić za mało zapytań na publikację.
-  Wówczas publikacja zostanie wstrzymana. Żadna kontrola nie jest pomijana.
-- Diagnostyka zawiera pozycję błędu i długość odpowiedzi, bez jej surowej treści.
-- Odpowiedź ucięta przez limit tokenów nadal jest odrzucana.
+Zmiana: instrukcja selekcji wymaga przeglądnięcia wszystkich kandydatów
+i ustawienia możliwych do opracowania tematów mniej ryzykownych przed
+wojną i oskarżeniami. To priorytet wyboru, nie zakaz tych kategorii.
+Kontrole dowodów i tematów wysokiego ryzyka nadal obowiązują.
+Nie zwiększono limitu zapytań. Działanie zależy od wiadomości w RSS
+i odpowiedzi modelu; nie gwarantuje publikacji w każdym cyklu.
+Nie zmieniaj klucza API ani działającego modelu.
 
-Walidacja: 104 testy offline przeszły, sprawdzono składnię.
-Nie wykonano testu rzeczywistego Gemini ani wdrożenia na GitHub.
-Sam poprzedni komunikat nie pozwala ustalić dokładnego rodzaju błędu JSON.
+Zmiana dotyczy instrukcji dla modelu. Sprawdzono składnię Python.
+Nie wykonano testu z rzeczywistym API.
