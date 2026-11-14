@@ -556,6 +556,36 @@ EXTRACT += """\nNajpierw ustal wspólne wydarzenie na podstawie głównych publi
 
 EXTRACT += """\nPrzed wysłaniem sprawdź: risk_reason nie może być pusty również przy\nhigh_risk=false. Uzasadnij ocenę na podstawie konkretnych twierdzeń w materiale.\nWszystkie quote kopiuj z text bez korekty pisowni, parafrazy i sklejania zdań.\n"""
 
+def parse_model_json(text):
+    """Accept one object, optionally in a single Markdown JSON fence."""
+    text = text.strip().lstrip("\ufeff").strip()
+    fence = chr(96) * 3
+    if text.startswith(fence) and text.endswith(fence):
+        body = text[3:-3].strip()
+        if body[:4].lower() == "json":
+            body = body[4:].strip()
+        text = body
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Powtórzony klucz JSON.")
+            result[key] = value
+        return result
+    def invalid_constant(value):
+        raise ValueError("Niedozwolona stała JSON.")
+    try:
+        result = json.loads(text, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+    except json.JSONDecodeError as exc:
+        raise APIError(f"Niepoprawny JSON modelu: wiersz {exc.lineno}, kolumna {exc.colno}; "
+                       f"długość odpowiedzi {len(text)} znaków.") from None
+    except ValueError as exc:
+        raise APIError(str(exc)) from None
+    if not isinstance(result, dict):
+        raise APIError("Odpowiedź modelu nie jest obiektem JSON.")
+    return result
+
+
 class Gemini:
     def __init__(self, key):
         self.key = key
@@ -563,7 +593,7 @@ class Gemini:
         self.calls, self.last = 0, 0
         self.opener = build_opener(NoRedirect())
 
-    def ask(self, instruction, data, tokens=8192):
+    def ask(self, instruction, data, tokens=8192, _retry_json=True):
         if self.calls >= 5:
             raise APIError("Limit 5 żądań API w cyklu.")
         wait = 15 - (time.monotonic() - self.last)
@@ -598,12 +628,18 @@ class Gemini:
         text = "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
                        if not p.get("thought"))
         try:
-            result = json.loads(text)
-        except (ValueError, TypeError):
-            raise APIError("Model nie zwrócił poprawnego JSON.") from None
-        if not isinstance(result, dict):
-            raise APIError("Odpowiedź modelu nie jest obiektem.")
-        return result
+            return parse_model_json(text)
+        except APIError as exc:
+            if not _retry_json or self.calls >= 5:
+                raise APIError(str(exc) + " Nie uzyskano poprawnej odpowiedzi; publikacja wstrzymana.") from None
+            logging.warning("%s Ponawiam odpowiedź tylko raz; wykorzystano %s/5 żądań.",
+                            exc, self.calls)
+            return self.ask(instruction + "\nFORMAT ODPOWIEDZI: zwróć wyłącznie jeden poprawny "
+                            "obiekt JSON, bez Markdown i tekstu przed/po obiekcie. "
+                            "Używaj podwójnych cudzysłowów dla kluczy i wartości tekstowych. "
+                            "Cudzysłowy wewnątrz tekstu prawidłowo escapuj. Nie pomijaj wymaganych pól. "
+                            "Nie zmieniaj kryteriów weryfikacji ani nie dopisuj danych.",
+                            data, tokens=tokens, _retry_json=False)
 
 
 

@@ -920,5 +920,70 @@ class DossierCorrectionTests(unittest.TestCase):
         self.assertIn("Brak uzasadnienia", data["validation_error"])
 
 
+
+class JsonResponseTests(unittest.TestCase):
+    def test_plain_and_fenced_json(self):
+        for text in ('{"ready":true}', '\ufeff {"ready":true}', chr(96)*3 + 'json\n{"ready":true}\n' + chr(96)*3):
+            self.assertEqual(n.parse_model_json(text), {"ready": True})
+
+    def test_malformed_json_is_not_guessed(self):
+        for text in ('{"ready": true,}', '{"ready":', 'Opis: {"ready":true}', '{"a":1} {"b":2}'):
+            with self.subTest(text=text):
+                with self.assertRaises(n.APIError):
+                    n.parse_model_json(text)
+
+    def test_ambiguous_or_nonstandard_json_is_rejected(self):
+        for text in ('{"ready":true,"ready":false}', '{"value":NaN}', '[]', 'null'):
+            with self.subTest(text=text):
+                with self.assertRaises(n.APIError):
+                    n.parse_model_json(text)
+
+    def response(self, text, finish="STOP"):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            "candidates": [{"finishReason": finish, "content": {"parts": [{"text": text}]}}]
+        }).encode()
+        return response
+
+    def client(self, texts):
+        client = n.Gemini("TEST_SECRET")
+        client.opener.open = MagicMock(side_effect=[self.response(t) for t in texts])
+        return client
+
+    def test_invalid_json_retried_once(self):
+        client = self.client(['{"ready":', '{"ready":true}'])
+        with patch.object(n.time, "sleep"):
+            self.assertEqual(client.ask("prompt", {"documents": []}), {"ready":True})
+        self.assertEqual(client.calls, 2)
+
+    def test_second_invalid_response_stops(self):
+        client = self.client(['bad', 'still bad'])
+        with patch.object(n.time, "sleep"):
+            with self.assertRaisesRegex(n.APIError, "wiersz"):
+                client.ask("prompt", {})
+        self.assertEqual(client.calls, 2)
+
+    def test_fifth_call_cannot_retry(self):
+        client = self.client(['bad'])
+        client.calls = 4
+        with patch.object(n.time, "sleep"):
+            with self.assertRaises(n.APIError):
+                client.ask("prompt", {})
+        self.assertEqual(client.calls, 5)
+        self.assertEqual(client.opener.open.call_count, 1)
+
+    def test_error_does_not_expose_response_text_or_secret(self):
+        with self.assertRaises(n.APIError) as result:
+            n.parse_model_json("TEST_SECRET bad response")
+        self.assertNotIn("TEST_SECRET", str(result.exception))
+
+    def test_truncated_api_output_not_accepted(self):
+        client = n.Gemini("unused")
+        client.opener.open = MagicMock(return_value=self.response('{"ready":true}', "MAX_TOKENS"))
+        with self.assertRaises(n.APIError):
+            client.ask("prompt", {})
+        self.assertEqual(client.calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

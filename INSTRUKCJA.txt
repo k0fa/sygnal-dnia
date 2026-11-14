@@ -1,4 +1,4 @@
-Sygnał Dnia — poprawka 2.9 dla instalacji 2.8
+Sygnał Dnia — poprawka 2.10 dla instalacji 2.9
 
 1. Rozpakuj ZIP.
 2. GitHub: Code -> Add file -> Upload files.
@@ -8,19 +8,18 @@ Sygnał Dnia — poprawka 2.9 dla instalacji 2.8
 Nie wybieraj Re-run starego uruchomienia po zmianie plików.
 
 Zmiany:
-- Jedna próba korekty dossier dla pustego risk_reason lub niepoprawnego cytatu.
-- Model otrzymuje błąd walidacji, poprzednie dossier i niezmienione źródła.
-- Skorygowane dossier przechodzi ponownie całą walidację.
-- Brak dopisywania uzasadnień przez kod; brak akceptacji zmyślonych cytatów.
-- Nieudana korekta kończy próbę, nie zapętla generacji.
-- Obowiązkowa kontrola gotowego tekstu pozostaje aktywna.
-- Limit pięciu zapytań API nie jest zwiększony. Korekta może zużyć zapytanie,
-  które wcześniej było przeznaczone na kolejny temat. Jest wykonywana tylko
-  gdy pozostaje budżet na korektę, tekst i wszystkie wymagane kontrole.
-- Dla tematu wysokiego ryzyka konieczna pozostaje dodatkowa kontrola.
-  Jeśli korekta ujawni wyższe ryzyko i zabraknie budżetu, publikacja jest wstrzymana.
-- Logi zawierają powód próby korekty dossier.
+- Parser akceptuje jeden obiekt JSON, także w pojedynczym bloku Markdown.
+- Usuwa znacznik BOM i zewnętrzne białe znaki.
+- Nie naprawia samodzielnie uszkodzonych danych ani nie zgaduje brakujących pól.
+- Powtórzone klucze, NaN, wiele obiektów i tekst poza JSON są odrzucane.
+- Jedno ponowienie niepoprawnego JSON dla danego zapytania, tylko jeśli pozostał
+  budżet w limicie 5 wywołań na cykl. Zwykłe reguły odstępów nadal obowiązują.
+- Ponowienie otrzymuje oryginalne dane i instrukcję poprawnego formatowania.
+- Ponowienia zużywają budżet: mogą pozostawić za mało zapytań na publikację.
+  Wówczas publikacja zostanie wstrzymana. Żadna kontrola nie jest pomijana.
+- Diagnostyka zawiera pozycję błędu i długość odpowiedzi, bez jej surowej treści.
+- Odpowiedź ucięta przez limit tokenów nadal jest odrzucana.
 
-Sprawdzono: 96 testów offline, wszystkie przeszły, oraz składnię plików.
-Testy używają atrap API. Nie przetestowano rzeczywistego Gemini ani nie
-wdrożono plików na GitHub. Korekta nie gwarantuje uzyskania poprawnej odpowiedzi.
+Walidacja: 104 testy offline przeszły, sprawdzono składnię.
+Nie wykonano testu rzeczywistego Gemini ani wdrożenia na GitHub.
+Sam poprzedni komunikat nie pozwala ustalić dokładnego rodzaju błędu JSON.
