@@ -64,7 +64,7 @@ def run():
     if not queue:
         raise Rejected("Brak nowych tematów RSS.")
     ai = Gemini(key)
-    logging.info("Wersja 2.5: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
+    logging.info("Wersja 2.6: maksymalnie jeden artykuł i pięć żądań API w cyklu.")
     topics = select_topics(ai, queue, records)
     if not topics:
         raise Rejected("Brak materiałów o jednym wydarzeniu od dwóch wydawców.")

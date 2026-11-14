@@ -1,69 +1,29 @@
-Sygnał Dnia — aktualizacja 2.5: wybór tematów, źródła pierwotne i ryzyko
+Sygnał Dnia — poprawka 2.6
 
-WGRANIE
+Wymaganie: istniejący projekt w wersji 2.5.
 1. Rozpakuj ZIP.
-2. Otwórz https://github.com/k0fa/sygnal-dnia → Add file → Upload files.
-3. Wgraj generator.py, newsroom.py i test_pipeline.py do głównego katalogu,
-   zastępując dotychczasowe pliki. Nie zmieniaj nazw ani wcięć ręcznie.
-4. Commit changes.
-5. Poczekaj na zakończenie uruchomienia wywołanego zmianą kodu.
-6. Actions → Generate and publish news → Run workflow → main → Run workflow.
-Nie używaj ponowienia starego uruchomienia, które korzysta ze starego kodu.
-Nie zmieniaj klucza, modelu, workflow ani historii opublikowanych artykułów.
+2. Otwórz repozytorium k0fa/sygnal-dnia, zakładka Code.
+3. Add file -> Upload files.
+4. Przeciągnij trzy pliki: generator.py, newsroom.py, test_pipeline.py.
+   Umieść je w głównym katalogu repozytorium, zastępując obecne wersje.
+5. Commit changes.
+6. Actions -> Generate and publish news -> Run workflow -> main -> Run workflow.
+   Nie wybieraj Re-run starego uruchomienia: korzysta ono ze starej wersji kodu.
+7. Otwórz podsumowanie nowego uruchomienia i sprawdź wynik generacji.
 
-DOBÓR TEMATÓW
-Instrukcja wyboru tematów preferuje możliwe do zweryfikowania informacje
-z rozpoznanym pochodzeniem. Jeśli są dostępne, uwzględnia też badania, technologię,
-naukę i kulturę. Nie nakazuje uznawania polityki lub sondażu za wysokie ryzyko
-wyłącznie na podstawie kategorii. Faktyczne zarzuty, działania wojenne, ofiary,
-zagrożenia, kwestie zdrowotne i porady inwestycyjne nadal wymagają rozszerzonej oceny.
-To preferencja w instrukcji modelu, nie gwarancja dostępności odpowiedniego tematu.
+Zmiany:
+- Uzupełniające linki pochodzą wyłącznie z treści artykułu, bez sekcji polecanych.
+- Nie są automatycznie pobierane kolejne artykuły portali z linków w treści.
+  Oryginalne materiały wybrane z RSS nadal są przetwarzane.
+- Uzupełniające dokumenty z dozwolonych domen wymagają zgodności słów
+  z tytułem i oznaczenia materiału źródłowego. To filtr heurystyczny:
+  może pominąć poprawne źródło i nie gwarantuje pełnej zgodności tematycznej.
+- Krótki, jednoznaczny cytat jest uzupełniany kontekstem z pobranego źródła.
+  Parafrazy i zmyślone fragmenty nadal są odrzucane.
+- Diagnostyka dowodów zawiera identyfikator faktu i źródła.
+- Nie zmieniono wymagań weryfikacji oskarżeń ani innych tematów wysokiego ryzyka.
 
-ŹRÓDŁA PIERWOTNE
-Decyduje rola konkretnego pobranego dokumentu, nie urzędowa domena.
-Obsługiwane role: oryginalny dokument, komunikat, badanie, zbiór danych,
-własny reportaż albo wywiad. Dla każdego wskazania model musi podać:
-- identyfikator faktycznie pobranego źródła;
-- autora i dokładny fragment tekstu wspierający ocenę autorstwa;
-- wyjaśnienie, dlaczego ta publikacja ma pierwotną rolę;
-- identyfikatory twierdzeń wysokiego ryzyka, które dokument wspiera.
-Kod sprawdza fragmenty i powiązania. Osobne wywołanie modelu musi następnie
-potwierdzić pierwotność i znaczenie każdego wskazanego dokumentu.
-Sam podpis autora, cytat urzędnika albo przedruk nie wystarczają.
-Komunikat strony konfliktu dowodzi treści jej oświadczenia, a nie automatycznie
-prawdziwości opisywanych zdarzeń. Instrukcje wymagają zachowania atrybucji.
-
-POBIERANIE
-Skrypt śledzi rzeczywiste odnośniki w artykułach opisane jako źródło, raport,
-badanie, wywiad, dane lub komunikat. Nie otwiera adresów wymyślonych przez model.
-Rozszerzono listę dozwolonych domen o pap.pl, cbos.pl, ibris.pl, pism.pl,
-nasa.gov, esa.int, gov.uk, president.gov.ua i bank.gov.ua.
-Dopuszczenie domeny do pobrania nie oznacza uznania każdej jej publikacji za pierwotną.
-Nadal obowiązują robots.txt, kontrola publicznych adresów IP i HTTPS, limity pobierania,
-maksymalnie trzy dodatkowe odnośniki na temat i sześć dokumentów.
-Obsługiwane są strony HTML; PDF, filmy i źródła wymagające logowania nie są obsługiwane.
-
-RAPORTOWANIE
-Raport pokazuje uzasadnienie i kategorie ryzyka również wtedy, gdy publikacja
-została odrzucona. Brak dowodu pierwotnego wskazuje konkretny problem:
-nieznane źródło, brak fragmentu o autorstwie, brak powiązania z faktem lub
-brak dowodów dla części istotnych twierdzeń.
-Zapisano ocenę ryzyka i dowody pierwotne również w metadanych opublikowanego tekstu.
-
-POZOSTAŁE ZASADY
-Zachowano trzy długości artykułów, tryb relacji z jednego nazwanego sondażu/depeszy,
-atrybucję, kontrolę danych i limit pięciu wywołań API oraz jednego artykułu na cykl.
-Wysokie ryzyko nadal oznacza dodatkową kontrolę. Jeśli po próbie kolejnego tematu
-brakuje limitu na wszystkie kontrole, publikacja jest wstrzymywana.
-Brak pierwotnego dowodu może nadal uniemożliwić publikację konkretnej wiadomości.
-
-SPRAWDZENIE
-64 testy zaliczone lokalnie, bez pominiętych testów, na Python 3.15.
-Sprawdzono m.in. nieurzędowy oryginalny wywiad, samą urzędową domenę bez dowodu,
-zmyślony fragment autorstwa, niepełne powiązania faktów, dodatkową kontrolę,
-wykrywanie dozwolonych odnośników oraz zapis artykułu i budowę strony.
-Testy korzystały z atrap API; nie użyto klucza użytkownika.
-Nie wdrożono zmian do repozytorium ani nie zweryfikowano rzeczywistej generacji.
-Dotychczasowy GitHub Actions uruchamia te same testy na Python 3.12.
-Nie dodano płatnego wyszukiwania ani nowych zależności produkcyjnych.
-Automatyczna ocena modelu może być błędna i nie zastępuje weryfikacji człowieka.
+Walidacja: 74 testy offline zakończone sukcesem, w tym testy z atrapą API.
+Nie wykonano testu z rzeczywistym kluczem Gemini ani wdrożenia na GitHub.
+Brak wystarczających dowodów nadal może skutkować wstrzymaniem publikacji.
+Nie zmieniaj sekretu GEMINI_API_KEY ani konfiguracji modelu z powodu tej poprawki.

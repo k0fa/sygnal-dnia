@@ -670,14 +670,14 @@ class PrimaryRiskTests(unittest.TestCase):
 
     def test_research_links_are_real_and_allowed(self):
         html = ('<nav><a href="https://www.gov.pl/web/nav/komunikat">Źródło</a></nav>'
-                '<article><a href="https://www.cbos.pl/raport-test">Raport źródłowy</a>'
+                '<article><a href="https://www.cbos.pl/raport-wyborczy">Raport wyborczy CBOS</a>'
                 '<a href="https://wiadomosci.onet.pl/wywiad-test">Oryginalny wywiad</a>'
                 '<a href="https://unknown.invalid/report">Raport</a>'
                 '<a href="http://127.0.0.1/report">Źródło</a></article>')
-        links = n.research_links(html, "https://onet.pl/test")
-        self.assertEqual(len(links), 2)
-        self.assertIn("https://www.cbos.pl/raport-test", links)
-        self.assertIn("https://wiadomosci.onet.pl/wywiad-test", links)
+        links = n.research_links(html, "https://onet.pl/test", "Sondaż wyborczy CBOS")
+        self.assertEqual(len(links), 1)
+        self.assertIn("https://www.cbos.pl/raport-wyborczy", links)
+        self.assertNotIn("https://wiadomosci.onet.pl/wywiad-test", links)
 
     def test_risk_explanation_survives_rejection_summary(self):
         docs, dossier, _ = fixture()
@@ -688,6 +688,52 @@ class PrimaryRiskTests(unittest.TestCase):
         with patch.object(n, "collect", return_value=docs):
             with self.assertRaisesRegex(n.Rejected, "liczby ofiar"):
                 n.prepare_article(ai, None, [[dict(title="Temat")]], [])
+
+
+
+class SourceRelevanceRegressionTests(unittest.TestCase):
+    def test_supplemental_news_stories_are_excluded(self):
+        html = '<article><a href="https://biznes.interia.pl/raport-microsoft">Raport Microsoft</a><a href="https://wiadomosci.wp.pl/komunikat-lotto">Komunikat Lotto</a></article>'
+        self.assertEqual(n.research_links(html, "https://onet.pl/test", "Awaria Microsoft"), [])
+
+    def test_recommended_primary_links_are_excluded(self):
+        html = '<article><aside class="recommended"><a href="https://www.cbos.pl/raport-wyborczy">Raport wyborczy</a></aside></article>'
+        self.assertEqual(n.research_links(html, "https://onet.pl/test", "Sondaż wyborczy"), [])
+
+    def test_unrelated_primary_report_is_excluded(self):
+        html = '<article><a href="https://stat.gov.pl/raport-inflacja">Raport inflacja</a></article>'
+        self.assertEqual(n.research_links(html, "https://onet.pl/test", "Awaria Microsoft"), [])
+
+    def test_missing_topic_does_not_follow_links(self):
+        self.assertEqual(n.research_links('<article><a href="https://www.cbos.pl/raport-wyborczy">Raport wyborczy</a></article>', "https://onet.pl/test"), [])
+
+    def test_unique_short_exact_quote_gets_source_context(self):
+        text = "To jest pełna relacja o wydarzeniu. Unikatowy dowód znajduje się w środku tego dokumentu."
+        quote = n.evidence_quote("Unikatowy dowód", text, "Fakt F1, źródło S1")
+        self.assertIn(quote, text)
+        self.assertGreaterEqual(len(quote), 30)
+
+    def test_ambiguous_short_quote_is_rejected(self):
+        with self.assertRaisesRegex(n.Rejected, "wielokrotnie"):
+            n.evidence_quote("ten sam dowód", "ten sam dowód oraz ten sam dowód", "F1/S1")
+
+    def test_false_quote_has_fact_and_source_diagnostic(self):
+        with self.assertRaisesRegex(n.Rejected, "F1/S2.*nie istnieje"):
+            n.evidence_quote("Zmyślony fragment dowodowy", "Rzeczywista treść źródła jest inna.", "F1/S2")
+
+    def test_long_exact_quote_is_retained(self):
+        quote = "fakty " * 100
+        self.assertEqual(n.evidence_quote(quote, quote, "F1/S1"), quote.strip())
+
+    def test_quote_whitespace_is_normalized(self):
+        text = "Dokładny fragment źródła zawiera liczne fakty."
+        self.assertEqual(n.evidence_quote(text.replace(" ", "  "), text, "F1/S1"), text)
+
+    def test_non_text_and_too_large_evidence_rejected(self):
+        for quote in (None, 123, "x" * 2001):
+            with self.subTest(quote_type=type(quote).__name__):
+                with self.assertRaises(n.Rejected):
+                    n.evidence_quote(quote, "x" * 3000, "F1/S1")
 
 
 if __name__ == "__main__":

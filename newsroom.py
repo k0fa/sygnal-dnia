@@ -141,7 +141,7 @@ class Reader:
         doc.update(url=final_url, text=text, extraction_method=method, group=source_group(final_url),
                    retrieved=datetime.now(timezone.utc).isoformat(),
                    official=belongs(urlsplit(final_url).hostname or "", OFFICIAL_DOMAINS))
-        doc["official_links"] = research_links(html, final_url)
+        doc["official_links"] = research_links(html, final_url, item.get("title", ""))
         self.cache[item["url"]] = doc
         return doc
 
@@ -316,15 +316,29 @@ def extract_article(html, url, title):
 
 
 
+
 class SourceLinks(HTMLParser):
+    """Only anchors inside article content, excluding recommendation blocks."""
+    BAD = ("related", "recommend", "suggest", "sidebar", "teaser", "promo",
+           "advert", "czytaj", "zobacz", "polecan", "najpopular")
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.stack, self.links, self.current = [], [], None
     def handle_starttag(self, tag, attrs):
         attrs = {k: v or "" for k, v in attrs}
+        labels = (attrs.get("class", "") + " " + attrs.get("id", "")).casefold()
+        excluded = (tag in ArticleParser.SKIP or "hidden" in attrs or
+                    attrs.get("aria-hidden") == "true" or
+                    any(token in labels for token in self.BAD))
+        scoped = (tag == "article" or "articleBody" in attrs.get("itemprop", "").split()
+                  or any(token in labels for token in ("article-body", "article__body",
+                                                       "article-content", "article__content")))
+        if self.stack:
+            excluded = excluded or self.stack[-1][1]
+            scoped = scoped or self.stack[-1][2]
         if tag not in ArticleParser.VOID:
-            self.stack.append(tag)
-        if tag == "a" and attrs.get("href") and not any(t in ArticleParser.SKIP for t in self.stack):
+            self.stack.append((tag, excluded, scoped))
+        if tag == "a" and attrs.get("href") and scoped and not excluded:
             self.current = [attrs["href"], []]
     def handle_data(self, text):
         if self.current is not None:
@@ -333,33 +347,67 @@ class SourceLinks(HTMLParser):
         if tag == "a" and self.current is not None:
             self.links.append((self.current[0], normalized(" ".join(self.current[1]))))
             self.current = None
-        if tag in self.stack:
-            i = len(self.stack) - 1 - self.stack[::-1].index(tag)
-            self.stack = self.stack[:i]
+        matches = [i for i, entry in enumerate(self.stack) if entry[0] == tag]
+        if matches:
+            self.stack = self.stack[:matches[-1]]
 
 
-def research_links(html, base):
+def topic_tokens(text):
+    generic = {"źródło", "źródła", "komunikat", "raport", "badanie", "badania",
+               "informacje", "polsce", "polski", "nowych", "nowego", "sprawie",
+               "właśnie", "mówił", "powiedział", "według", "wszystko", "wiadomości"}
+    return {word[:6] for word in words(text) if len(word) >= 5 and word not in generic}
+
+
+def research_links(html, base, title=""):
     parser = SourceLinks()
     parser.feed(html)
     candidates = {}
+    topic = topic_tokens(title)
+    if not topic:
+        return []
     terms = ("źródł", "source", "raport", "report", "badani", "research", "komunikat",
-             "statement", "wywiad", "interview", "dane", "dataset", "publikac")
+             "statement", "wywiad", "interview", "dataset")
     for href, label in parser.links:
         url = urljoin(base, href).split("#")[0]
         p = urlsplit(url)
-        if url == base or len(p.path.strip("/")) < 3:
+        # Additional portal stories are not primary documents. Seed RSS stories
+        # remain eligible; this rule concerns only automatically followed links.
+        if (url == base or len(p.path.strip("/")) < 3 or
+                belongs(p.hostname or "", NEWS_DOMAINS)):
             continue
         try:
             checked_url(url, dns=False)
         except ValueError:
             continue
         text = (label + " " + p.path).casefold()
-        score = sum(term in text for term in terms)
-        if belongs(p.hostname or "", OFFICIAL_DOMAINS):
-            score += 2
-        if score:
-            candidates[url] = max(score, candidates.get(url, 0))
-    return sorted(candidates, key=lambda url: -candidates[url])[:4]
+        shared = topic & topic_tokens(text)
+        if not shared or not any(term in text for term in terms):
+            continue
+        candidates[url] = len(shared)
+    return sorted(candidates, key=lambda url: -candidates[url])[:3]
+
+
+def evidence_quote(fragment, text, label):
+    """Normalize exact evidence, with bounded context for short unique spans."""
+    if not isinstance(fragment, str):
+        raise Rejected(f"{label}: fragment dowodowy ma typ {type(fragment).__name__}, wymagany tekst.")
+    quote, source = normalized(fragment), normalized(text)
+    count = len(quote)
+    if not 8 <= count <= 2000:
+        raise Rejected(f"{label}: fragment dowodowy ma {count} znaków; "
+                       "wymagany dosłowny fragment 8–2000 znaków (zalecane 30–500).")
+    pos = source.find(quote)
+    if pos < 0:
+        raise Rejected(f"{label}: fragment dowodowy nie istnieje w źródle.")
+    if count < 30:
+        if source.find(quote, pos + 1) >= 0:
+            raise Rejected(f"{label}: krótki fragment występuje wielokrotnie; potrzebny pełniejszy dowód.")
+        start, end = max(0, pos - 70), min(len(source), pos + count + 70)
+        quote = source[start:end]
+        if len(quote) < 30:
+            raise Rejected(f"{label}: za mało tekstu na kontekst dowodu.")
+    return quote
 
 
 def ngrams(text, n=10):
@@ -488,6 +536,8 @@ EXTRACT += "\nOCENA RYZYKA I ROLI DOKUMENTÓW:\nZawsze zwróć risk_reason (konk
 SELECT += """\nWybieraj do trzech tematów możliwych do rzetelnego opisania, nie tylko najbardziej\nsensacyjne nagłówki. Jeśli są dostępne, uwzględnij temat technologiczny, naukowy,\nkulturalny lub opis konkretnego badania/komunikatu z nazwanym autorem. Preferuj\njasne pochodzenie i dostępny materiał. Nie zgaduj dostępności źródeł z samego tytułu.\nPrzy wojnie i niepotwierdzonych zarzutach preferuj widoczne wskazanie dokumentu\npierwotnego. Nie obniżaj oceny ryzyka, by umożliwić publikację.\n"""
 
 VERIFY += """\nSprawdź również high_risk, risk_reason i risk_categories. Jeśli dossier ukryło\nryzyko lub błędnie zaniżyło jego ocenę, approved=false. Nie zmieniaj klasyfikacji\nw celu obejścia kontroli. Opis roli dokumentu nie jest dowodem sam w sobie.\n"""
+
+EXTRACT += """\nNajpierw ustal wspólne wydarzenie na podstawie głównych publikacji. Odrzuć\npolecane wiadomości i poboczne fragmenty strony. Materiał dodatkowy służy tylko\njako dowód dotyczący tego wydarzenia, nie jako nowy temat artykułu.\n"""
 
 class Gemini:
     def __init__(self, key):
@@ -741,11 +791,8 @@ def check_dossier(dossier, docs):
         for ev in evidence:
             if not isinstance(ev, dict) or ev.get("source") not in source_map:
                 raise Rejected("Dowód wskazuje nieznane źródło.")
-            fragment = ev.get("quote", "")
-            if not isinstance(fragment, str) or not 30 <= len(fragment) <= 500:
-                raise Rejected("Niepoprawny fragment dowodowy.")
-            if normalized(fragment) not in normalized(source_map[ev["source"]]["text"]):
-                raise Rejected("Fragment dowodowy nie istnieje w źródle.")
+            label = f'Fakt {fact["id"]}, źródło {ev["source"]}'
+            ev["quote"] = evidence_quote(ev.get("quote"), source_map[ev["source"]]["text"], label)
             used.add(ev["source"])
     if origin is None and len({source_map[s]["group"] for s in used}) < 2:
         raise Rejected("Fakty pochodzą od jednego wydawcy.")
