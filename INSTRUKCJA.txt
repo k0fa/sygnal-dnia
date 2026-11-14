@@ -1,11 +1,10 @@
-Sygnał Dnia 2.15
+Sygnał Dnia 2.16
 Rozpakuj ZIP. GitHub: Code -> Add file -> Upload files.
 Podmień generator.py, newsroom.py, test_pipeline.py. Commit changes.
 Actions -> Generate and publish news -> Run workflow -> main.
 
-Kontrola wskazuje teraz konkretne liczby bez zgodnego zapisu w źródłach.
-Jedna korekta artykułu obejmuje także takie liczby. Model otrzymuje
-źródła i błąd. Po korekcie obowiązują wszystkie kontrole i końcowa weryfikacja.
-Nie zwiększono limitu 5 zapytań. Nie dodano automatycznej akceptacji przeliczeń
-ani różnych zapisów liczb; wymagają poprawy lub oceny na podstawie źródła.
-112 testów offline przeszło; rzeczywiste API nie było testowane.
+Minimum krótkiej wiadomości zmieniono ze 180 na 160 słów. Maksimum 300.
+Ograniczenia są przekazywane modelowi. Dłuższe formaty i kontrole źródeł
+pozostają aktywne. Artykuł 174 słowa przejdzie samą kontrolę długości,
+ale musi jeszcze spełnić pozostałe wymagania i końcową weryfikację.
+112 testów offline przeszło. Nie wykonano próby z rzeczywistym API.

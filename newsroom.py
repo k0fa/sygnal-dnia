@@ -904,7 +904,7 @@ def article_policy(facts, docs):
     elif count >= 10 and source_words >= 650:
         mode, low, high, sections = "artykuł", 300, 550, 3
     else:
-        mode, low, high, sections = "krótka wiadomość", 180, 300, 2
+        mode, low, high, sections = "krótka wiadomość", 160, 300, 2
     return dict(mode=mode, min_words=low, max_words=high,
                 min_sections=sections, max_sections=6 if sections == 3 else 4,
                 fact_count=count, source_words=source_words)

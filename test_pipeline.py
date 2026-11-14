@@ -426,7 +426,7 @@ class AdaptiveLengthTests(unittest.TestCase):
         self.assertEqual(n.check_draft(draft, facts, docs)[0], 648)
 
     def test_word_boundaries_for_each_mode(self):
-        for total, count, low, high in [(400, 6, 180, 300),
+        for total, count, low, high in [(400, 6, 160, 300),
                                         (708, 10, 300, 550),
                                         (1200, 16, 600, 1000)]:
             docs, dossier, draft = self.material(total, count)
