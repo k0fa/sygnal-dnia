@@ -1,29 +1,29 @@
-Sygnał Dnia — poprawka 2.7 (dla istniejącej instalacji 2.6)
+Sygnał Dnia — poprawka 2.8 dla instalacji 2.7
 
 1. Rozpakuj ZIP.
-2. Repozytorium k0fa/sygnal-dnia -> Code -> Add file -> Upload files.
-3. Wgraj do głównego katalogu, zastępując:
-   generator.py
-   newsroom.py
-   test_pipeline.py
+2. GitHub: Code -> Add file -> Upload files.
+3. Podmień w głównym katalogu generator.py, newsroom.py, test_pipeline.py.
 4. Commit changes.
 5. Actions -> Generate and publish news -> Run workflow -> main -> Run workflow.
-Nie wybieraj Re-run starego uruchomienia: używa poprzedniej wersji kodu.
-Nie zmieniaj klucza API ani modelu.
+Nie uruchamiaj starego zadania przez Re-run po zmianie plików.
 
 Zmiany:
-- Krótkie identyfikatory N1, N2... w zapytaniu, mapowane na oryginalne ID.
-- Jawna grupa wydawnicza; różne serwisy Interii nie liczą się jako różni wydawcy.
-- Selekcja szuka wspólnego wydarzenia, bez przedwczesnego wymagania długiego tekstu.
-- Szczegółowe uzasadnienia braku tematu i odrzucenia grup, zamiast jednego ogólnego komunikatu.
-- Rozpatrywanie poprawnych grup również po niepoprawnych; pomijanie powtórzonych grup.
-- Kontrole dowodów i zasad publikacji pozostają aktywne. Brak pasujących źródeł
-  nadal może skutkować brakiem publikacji; nie wymuszamy łączenia różnych wydarzeń.
-- Limit pięciu wywołań API nie jest zwiększony.
+- Instrukcja dossier jawnie wymaga source_mode i podaje reguły obu trybów.
+- Opisy wspólnego komunikatu mogą być relacją attributed z potwierdzonym
+  pochodzeniem; nie są przedstawiane jako niezależne potwierdzenia.
+- Nazwa autora komunikatu musi pochodzić z tekstu. Nie należy dopisywać
+  pełnej nazwy spółki z pamięci modelu.
+- Dowody pochodzenia używają tej samej kontroli dokładnego cytatu co dowody
+  faktów. Krótki jednoznaczny fragment jest rozszerzany rzeczywistym kontekstem.
+  Zmyślone cytaty, niepotwierdzone nazwy oraz niejednoznaczne krótkie fragmenty
+  nadal są odrzucane.
+- Diagnostyka odróżnia brak trybu, brak cytatu w źródle i brak nazwy w cytacie.
+- Zachowano weryfikację treści i dodatkową kontrolę tematów wysokiego ryzyka.
+- Nie zwiększono limitu API ani nie dodano płatnych usług.
 
-Walidacja: 83 testy offline zakończone sukcesem; sprawdzono składnię plików.
-Testy korzystają z atrap API, nie z rzeczywistego klucza Gemini.
-Nie wdrożono plików bezpośrednio na GitHub.
-Poprzednie logi nie zawierają odpowiedzi selektora, więc nie pozwalają ustalić,
-czy model zwrócił pustą listę, czy grupy zostały odrzucone przez walidację.
-Wersja 2.7 ujawnia tę różnicę w kolejnych uruchomieniach.
+Walidacja: 89 testów offline, wszystkie przeszły. Składnia plików sprawdzona.
+Nie wykonano próby z rzeczywistym API Gemini ani wdrożenia na GitHub.
+Dotychczasowy ogólny błąd autora nie pozwala stwierdzić, czy cytat miał
+nieprawidłową długość, nie występował w źródle, czy nie zawierał wskazanej nazwy.
+Poprawka rozwiązuje niespójność kodu i doprecyzowuje pozostałe przyczyny;
+nie gwarantuje publikacji tematów pozbawionych wystarczających dowodów.

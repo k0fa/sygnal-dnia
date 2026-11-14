@@ -802,5 +802,47 @@ class TopicSelectionRegressionTests(unittest.TestCase):
         self.assertIn("już opublikowany", " ".join(audit))
 
 
+
+class OriginEvidenceRegressionTests(unittest.TestCase):
+    def origin(self, quote, value="Microsoft", text=None):
+        docs = [dict(id="S1", text=text or "Microsoft wydał komunikat o przywróceniu usług po awarii.")]
+        dossier = dict(source_mode="attributed", independent=False,
+                       origin=dict(kind="statement", name=dict(value=value,
+                           evidence=[dict(source="S1", quote=quote)])))
+        return dossier, docs
+
+    def test_short_exact_statement_evidence_has_context(self):
+        dossier, docs = self.origin("Microsoft wydał komunikat")
+        origin = n.check_origin(dossier, docs)
+        quote = origin["name"]["evidence"][0]["quote"]
+        self.assertGreaterEqual(len(quote), 30)
+        self.assertIn(quote, docs[0]["text"])
+
+    def test_long_exact_origin_evidence_is_accepted(self):
+        quote = "Microsoft wydał komunikat. " + "Opis potwierdzonej informacji. " * 25
+        dossier, docs = self.origin(quote, text=quote)
+        n.check_origin(dossier, docs)
+
+    def test_unfounded_full_company_name_rejected(self):
+        dossier, docs = self.origin("Microsoft wydał komunikat o przywróceniu usług po awarii.",
+                                   value="Microsoft Corporation")
+        with self.assertRaisesRegex(n.Rejected, "S1.*nie występuje"):
+            n.check_origin(dossier, docs)
+
+    def test_paraphrased_origin_quote_rejected(self):
+        dossier, docs = self.origin("Microsoft poinformował, że wszystkie usługi już działają.")
+        with self.assertRaisesRegex(n.Rejected, "S1.*nie istnieje"):
+            n.check_origin(dossier, docs)
+
+    def test_ambiguous_short_name_is_not_enough(self):
+        dossier, docs = self.origin("Microsoft", text="Microsoft to firma. Microsoft wydał komunikat.")
+        with self.assertRaisesRegex(n.Rejected, "wielokrotnie"):
+            n.check_origin(dossier, docs)
+
+    def test_missing_mode_is_diagnosed_not_inferred(self):
+        with self.assertRaisesRegex(n.Rejected, "brak source_mode"):
+            n.check_origin(dict(independent=False), [])
+
+
 if __name__ == "__main__":
     unittest.main()
