@@ -844,5 +844,81 @@ class OriginEvidenceRegressionTests(unittest.TestCase):
             n.check_origin(dict(independent=False), [])
 
 
+
+class DossierCorrectionTests(unittest.TestCase):
+    def run_article(self, responses, docs):
+        ai = RetryTests().client(responses)
+        entries = []
+        with patch.object(n, "collect", return_value=docs):
+            result = n.prepare_article(ai, None, [[dict(title="Test")]], entries)
+        return ai, entries, result
+
+    def test_missing_risk_reason_corrected_with_full_review(self):
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["risk_reason"] = ""
+        ai, entries, _ = self.run_article([bad, good, draft, dict(approved=True, issues=[])], docs)
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("Brak uzasadnienia", entries[0]["correction"])
+
+    def test_wrong_quote_can_be_replaced_only_by_real_evidence(self):
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["facts"][0]["evidence"][0]["quote"] = "Ten wymyślony cytat nie istnieje w żadnym dokumencie."
+        ai, entries, _ = self.run_article([bad, good, draft, dict(approved=True, issues=[])], docs)
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("nie istnieje", entries[0]["correction"])
+
+    def test_second_invalid_dossier_is_rejected_without_loop(self):
+        docs, bad, _ = fixture()
+        bad["risk_reason"] = ""
+        ai = RetryTests().client([copy.deepcopy(bad), copy.deepcopy(bad)])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "Brak uzasadnienia"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 3)
+
+    def test_correction_never_skips_final_review(self):
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["risk_reason"] = ""
+        with self.assertRaisesRegex(n.Rejected, "Niepoparta teza"):
+            self.run_article([bad, good, draft, dict(approved=False, issues=["Niepoparta teza"])], docs)
+
+    def test_high_risk_correction_not_attempted_without_review_budget(self):
+        docs, bad, _ = fixture()
+        bad.update(high_risk=True, risk_categories=["active_conflict"], risk_reason="")
+        ai = RetryTests().client([bad])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "Brak uzasadnienia"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 2)
+
+    def test_correction_escalating_risk_cannot_bypass_extra_review(self):
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["risk_reason"] = ""
+        good.update(high_risk=True, risk_categories=["active_conflict"],
+                    risk_reason="Opis działań wojennych.", risk_fact_ids=["F1"])
+        primary_fixture(docs, good)
+        ai = RetryTests().client([bad, good])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "wysokiego ryzyka"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 3)
+
+    def test_repair_request_contains_original_documents_and_validation_error(self):
+        docs, good, _ = fixture()
+        bad = copy.deepcopy(good)
+        bad["risk_reason"] = ""
+        ai = RetryTests().client([bad, good])
+        original = ai.ask
+        ai.ask = MagicMock(side_effect=original)
+        n.validated_dossier(ai, docs, {})
+        data = ai.ask.call_args.args[1]
+        self.assertEqual(data["documents"], docs)
+        self.assertIn("Brak uzasadnienia", data["validation_error"])
+
+
 if __name__ == "__main__":
     unittest.main()

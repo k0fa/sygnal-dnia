@@ -25,6 +25,10 @@ class Rejected(ValueError):
     """Editorial rejection, not a publication."""
 
 
+class CorrectableDossier(Rejected):
+    """Invalid evidence or missing explanation; one correction may be attempted."""
+
+
 class APIError(RuntimeError):
     """API/configuration failure; must be visible in Actions."""
 
@@ -391,22 +395,22 @@ def research_links(html, base, title=""):
 def evidence_quote(fragment, text, label):
     """Normalize exact evidence, with bounded context for short unique spans."""
     if not isinstance(fragment, str):
-        raise Rejected(f"{label}: fragment dowodowy ma typ {type(fragment).__name__}, wymagany tekst.")
+        raise CorrectableDossier(f"{label}: fragment dowodowy ma typ {type(fragment).__name__}, wymagany tekst.")
     quote, source = normalized(fragment), normalized(text)
     count = len(quote)
     if not 8 <= count <= 2000:
-        raise Rejected(f"{label}: fragment dowodowy ma {count} znaków; "
+        raise CorrectableDossier(f"{label}: fragment dowodowy ma {count} znaków; "
                        "wymagany dosłowny fragment 8–2000 znaków (zalecane 30–500).")
     pos = source.find(quote)
     if pos < 0:
-        raise Rejected(f"{label}: fragment dowodowy nie istnieje w źródle.")
+        raise CorrectableDossier(f"{label}: fragment dowodowy nie istnieje w źródle.")
     if count < 30:
         if source.find(quote, pos + 1) >= 0:
-            raise Rejected(f"{label}: krótki fragment występuje wielokrotnie; potrzebny pełniejszy dowód.")
+            raise CorrectableDossier(f"{label}: krótki fragment występuje wielokrotnie; potrzebny pełniejszy dowód.")
         start, end = max(0, pos - 70), min(len(source), pos + count + 70)
         quote = source[start:end]
         if len(quote) < 30:
-            raise Rejected(f"{label}: za mało tekstu na kontekst dowodu.")
+            raise CorrectableDossier(f"{label}: za mało tekstu na kontekst dowodu.")
     return quote
 
 
@@ -549,6 +553,8 @@ SELECT += """\nWybieraj do trzech tematów możliwych do rzetelnego opisania, ni
 VERIFY += """\nSprawdź również high_risk, risk_reason i risk_categories. Jeśli dossier ukryło\nryzyko lub błędnie zaniżyło jego ocenę, approved=false. Nie zmieniaj klasyfikacji\nw celu obejścia kontroli. Opis roli dokumentu nie jest dowodem sam w sobie.\n"""
 
 EXTRACT += """\nNajpierw ustal wspólne wydarzenie na podstawie głównych publikacji. Odrzuć\npolecane wiadomości i poboczne fragmenty strony. Materiał dodatkowy służy tylko\njako dowód dotyczący tego wydarzenia, nie jako nowy temat artykułu.\n"""
+
+EXTRACT += """\nPrzed wysłaniem sprawdź: risk_reason nie może być pusty również przy\nhigh_risk=false. Uzasadnij ocenę na podstawie konkretnych twierdzeń w materiale.\nWszystkie quote kopiuj z text bez korekty pisowni, parafrazy i sklejania zdań.\n"""
 
 class Gemini:
     def __init__(self, key):
@@ -706,7 +712,7 @@ def check_risk(dossier, docs, facts):
     reason = dossier.get("risk_reason")
     categories = dossier.get("risk_categories")
     if not isinstance(reason, str) or not reason.strip():
-        raise Rejected("Brak uzasadnienia oceny ryzyka.")
+        raise CorrectableDossier("Brak uzasadnienia oceny ryzyka.")
     if (not isinstance(categories, list) or any(
             not isinstance(c, str) or c not in RISK_CATEGORIES for c in categories)):
         raise Rejected("Niepoprawne kategorie ryzyka.")
@@ -924,6 +930,42 @@ def review_result(review):
             review.get("issues", "Brak uzasadnienia modelu.")))
 
 
+def validated_dossier(ai, docs, entry):
+    dossier = ai.ask(EXTRACT, dict(documents=docs))
+    for attempt in range(2):
+        entry["risk"] = dict(high=dossier.get("high_risk"),
+                             categories=dossier.get("risk_categories"),
+                             reason=diagnostic_text(dossier.get("risk_reason", "Brak uzasadnienia")))
+        logging.info("Ocena ryzyka: %s", json.dumps(entry["risk"], ensure_ascii=False))
+        try:
+            return dossier, check_dossier(dossier, docs)
+        except CorrectableDossier as exc:
+            # Reserve draft + review, and extra review for any possible high risk.
+            low_risk = dossier.get("high_risk") is False and dossier.get("risk_categories") == []
+            required = 3 if low_risk else 4  # correction + draft + review(s)
+            if attempt or 5 - ai.calls < required:
+                raise
+            entry["correction"] = diagnostic_text(exc)
+            logging.warning("Jedna korekta dossier w limicie 5 żądań: %s", entry["correction"])
+            dossier = ai.ask(EXTRACT + CORRECT_DOSSIER, dict(
+                documents=docs, previous_dossier=dossier, validation_error=str(exc)))
+    raise Rejected("Nie udało się poprawić dossier.")
+
+
+CORRECT_DOSSIER = """
+KOREKTA ODPOWIEDZI: poprzednie dossier nie przeszło walidacji.
+Zwróć całe poprawione dossier, nie sam zmieniony fragment.
+Ponownie porównaj wszystkie dowody z documents. Każdy quote kopiuj
+jako ciągły fragment text wskazanego source, zachowując zapis, liczby i interpunkcję.
+Nie poprawiaj ani nie parafrazuj tekstu cytatu. Jeśli nie ma dowodu dla tezy,
+usuń tę tezę; nie dopisuj dowodów. Jeśli pozostanie mniej niż 6 faktów, ready=false.
+risk_reason musi zawierać konkretne uzasadnienie także przy high_risk=false.
+Nie obniżaj ryzyka ani nie deklaruj niezależności, aby ominąć kontrolę.
+Oceń ponownie treść, a nie tylko zgodność formatu. ready=false jest poprawną
+odpowiedzią, jeśli materiał nie wystarcza. Brakujące dane pozostaw niepotwierdzone.
+"""
+
+
 def prepare_article(ai, reader, topics, diagnostics):
     """Try another topic only if the remaining API budget permits review."""
     for index, items in enumerate(topics, 1):
@@ -944,12 +986,7 @@ def prepare_article(ai, reader, topics, diagnostics):
                                          status="PRZYJĘTO", reason="", method="HTML") for d in docs]
             logging.info("Temat %s: %s; źródła: %s", index, label,
                          json.dumps(entry["sources"], ensure_ascii=False))
-            dossier = ai.ask(EXTRACT, dict(documents=docs))
-            entry["risk"] = dict(high=dossier.get("high_risk"),
-                                 categories=dossier.get("risk_categories"),
-                                 reason=diagnostic_text(dossier.get("risk_reason", "Brak uzasadnienia")))
-            logging.info("Ocena ryzyka: %s", json.dumps(entry["risk"], ensure_ascii=False))
-            facts = check_dossier(dossier, docs)
+            dossier, facts = validated_dossier(ai, docs, entry)
             policy = article_policy(facts, docs)
             entry["length_policy"] = policy
             logging.info("Format tekstu: %s", json.dumps(policy, ensure_ascii=False))
@@ -983,6 +1020,7 @@ def prepare_article(ai, reader, topics, diagnostics):
     details = "\n".join(
         f'Temat {e["topic"]}: {e["title"]}\nPowód: {e.get("reason", e["status"])}\n'
         + ("Ocena ryzyka: " + diagnostic_text(e.get("risk", {}), 600) + "\n")
+        + ("Próba korekty dossier: " + e["correction"] + "\n" if e.get("correction") else "")
         + "\n".join(f'Źródło: {s["url"]} | słowa: {s.get("words") if s.get("words") is not None else "brak odczytu"} | {s.get("method", "")} | {s.get("status", "")} | {s.get("reason", "")}' for s in e["sources"])
         for e in diagnostics)
     raise Rejected("Nie opublikowano artykułu. Wykorzystane wywołania API: "

@@ -1,29 +1,26 @@
-Sygnał Dnia — poprawka 2.8 dla instalacji 2.7
+Sygnał Dnia — poprawka 2.9 dla instalacji 2.8
 
 1. Rozpakuj ZIP.
 2. GitHub: Code -> Add file -> Upload files.
 3. Podmień w głównym katalogu generator.py, newsroom.py, test_pipeline.py.
 4. Commit changes.
 5. Actions -> Generate and publish news -> Run workflow -> main -> Run workflow.
-Nie uruchamiaj starego zadania przez Re-run po zmianie plików.
+Nie wybieraj Re-run starego uruchomienia po zmianie plików.
 
 Zmiany:
-- Instrukcja dossier jawnie wymaga source_mode i podaje reguły obu trybów.
-- Opisy wspólnego komunikatu mogą być relacją attributed z potwierdzonym
-  pochodzeniem; nie są przedstawiane jako niezależne potwierdzenia.
-- Nazwa autora komunikatu musi pochodzić z tekstu. Nie należy dopisywać
-  pełnej nazwy spółki z pamięci modelu.
-- Dowody pochodzenia używają tej samej kontroli dokładnego cytatu co dowody
-  faktów. Krótki jednoznaczny fragment jest rozszerzany rzeczywistym kontekstem.
-  Zmyślone cytaty, niepotwierdzone nazwy oraz niejednoznaczne krótkie fragmenty
-  nadal są odrzucane.
-- Diagnostyka odróżnia brak trybu, brak cytatu w źródle i brak nazwy w cytacie.
-- Zachowano weryfikację treści i dodatkową kontrolę tematów wysokiego ryzyka.
-- Nie zwiększono limitu API ani nie dodano płatnych usług.
+- Jedna próba korekty dossier dla pustego risk_reason lub niepoprawnego cytatu.
+- Model otrzymuje błąd walidacji, poprzednie dossier i niezmienione źródła.
+- Skorygowane dossier przechodzi ponownie całą walidację.
+- Brak dopisywania uzasadnień przez kod; brak akceptacji zmyślonych cytatów.
+- Nieudana korekta kończy próbę, nie zapętla generacji.
+- Obowiązkowa kontrola gotowego tekstu pozostaje aktywna.
+- Limit pięciu zapytań API nie jest zwiększony. Korekta może zużyć zapytanie,
+  które wcześniej było przeznaczone na kolejny temat. Jest wykonywana tylko
+  gdy pozostaje budżet na korektę, tekst i wszystkie wymagane kontrole.
+- Dla tematu wysokiego ryzyka konieczna pozostaje dodatkowa kontrola.
+  Jeśli korekta ujawni wyższe ryzyko i zabraknie budżetu, publikacja jest wstrzymana.
+- Logi zawierają powód próby korekty dossier.
 
-Walidacja: 89 testów offline, wszystkie przeszły. Składnia plików sprawdzona.
-Nie wykonano próby z rzeczywistym API Gemini ani wdrożenia na GitHub.
-Dotychczasowy ogólny błąd autora nie pozwala stwierdzić, czy cytat miał
-nieprawidłową długość, nie występował w źródle, czy nie zawierał wskazanej nazwy.
-Poprawka rozwiązuje niespójność kodu i doprecyzowuje pozostałe przyczyny;
-nie gwarantuje publikacji tematów pozbawionych wystarczających dowodów.
+Sprawdzono: 96 testów offline, wszystkie przeszły, oraz składnię plików.
+Testy używają atrap API. Nie przetestowano rzeczywistego Gemini ani nie
+wdrożono plików na GitHub. Korekta nie gwarantuje uzyskania poprawnej odpowiedzi.
