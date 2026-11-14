@@ -1076,5 +1076,31 @@ class NumberCorrectionTests(unittest.TestCase):
         self.assertEqual(ai.calls, 3)
 
 
+
+class LengthCorrectionTests(unittest.TestCase):
+    def test_short_draft_is_rewritten_and_reviewed(self):
+        docs, dossier, draft = fixture()
+        short = copy.deepcopy(draft)
+        for section in short["sections"]:
+            section["paragraphs"] = section["paragraphs"][:1]
+        ai = RetryTests().client([dossier, short, draft, dict(approved=True, issues=[])])
+        entries = []
+        with patch.object(n, "collect", return_value=docs):
+            n.prepare_article(ai, None, [[dict(title="Test")]], entries)
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("słów", entries[0]["rewrite"])
+        self.assertEqual(entries[0]["status"], "ZATWIERDZONO")
+
+    def test_repeated_length_error_stops_after_one_rewrite(self):
+        docs, dossier, draft = fixture()
+        for section in draft["sections"]:
+            section["paragraphs"] = section["paragraphs"][:1]
+        ai = RetryTests().client([dossier, draft, copy.deepcopy(draft)])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "słów"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 4)
+
+
 if __name__ == "__main__":
     unittest.main()

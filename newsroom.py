@@ -37,6 +37,10 @@ class UnsupportedNumber(Rejected):
     """A numeric token is absent from sources; semantic review is still required."""
 
 
+class DraftLength(Rejected):
+    """Draft body word count is outside the requested range."""
+
+
 class APIError(RuntimeError):
     """API/configuration failure; must be visible in Actions."""
 
@@ -528,6 +532,8 @@ Przy sprzecznych kluczowych danych ready=false. Oceniaj rzeczywistą treść."""
 WRITE = """Napisz oryginalny, obiektywny artykuł po polsku z dossier.
 Ściśle zastosuj length_policy przekazane w danych: min_words–max_words
 słów w akapitach i min_sections–max_sections sekcji. To ograniczenia kodu.
+Tytuł, summary i śródtytuły nie wliczają się do liczby słów. Celuj w środek
+podanego zakresu, nie w dolną granicę. Dla zakresu 160–300 celuj w 220–240 słów.
 Dopasuj szczegółowość do faktów. Bez powtórzeń, lania wody i wiedzy z pamięci.
 Jeśli fakty nie wystarczają na dolny limit, publish=false; nie dopełniaj tekstu.
 Konkretny tytuł: kto, co zrobił; bez clickbaitu i przesądzania zarzutów.
@@ -946,7 +952,7 @@ def check_draft(draft, facts, docs, dossier=None):
             body.append(paragraph["text"])
     length = sum(len(words(p)) for p in body)
     if not policy["min_words"] <= length <= policy["max_words"]:
-        raise Rejected(f'Tekst ma {length} słów; tryb {policy["mode"]} wymaga '
+        raise DraftLength(f'Tekst ma {length} słów; tryb {policy["mode"]} wymaga '
                        f'{policy["min_words"]}–{policy["max_words"]}.')
     if len(set(body)) != len(body):
         raise Rejected("Powtórzone akapity.")
@@ -1039,7 +1045,7 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
     draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
     try:
         length, used = check_draft(draft, facts, docs, dossier)
-    except (CopiedPassage, UnsupportedNumber) as exc:
+    except (CopiedPassage, UnsupportedNumber, DraftLength) as exc:
         # One rewrite, then normal review(s); never spend their reserved budget.
         required = 3 if dossier["high_risk"] else 2
         if 5 - ai.calls < required:
@@ -1047,6 +1053,11 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
         entry["rewrite"] = diagnostic_text(exc)
         logging.info(entry["rewrite"])
         draft = ai.ask(WRITE + "\nKOREKTA: usuń błąd podany w validation_error. "
+                       "Jeśli błąd dotyczy długości tekstu, popraw liczbę słów samych akapitów. "
+                       "Tytuł, summary i śródtytuły nie są wliczane. Celuj w środek zakresu length_policy. "
+                       "Zbyt krótki tekst rozwiń o pominięte udokumentowane fakty z dossier, "
+                       "bez powtórzeń, ozdobników ani dopisywania informacji. Zbyt długi skróć. "
+                       "Jeśli materiał nie wystarcza, zwróć publish=false. "
                        "Jeśli błąd dotyczy liczby, sprawdź jej wartość i jednostkę w documents. "
                        "Użyj zapisu ze źródła. Usuń niepopartą tezę; nie zastępuj liczby dowolną "
                        "inną występującą w źródle. Nie wykonuj nowych obliczeń. "
