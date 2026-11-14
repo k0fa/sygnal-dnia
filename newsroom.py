@@ -916,6 +916,19 @@ def article_policy(facts, docs):
                 fact_count=count, source_words=source_words)
 
 
+def copied_passage(passages, docs):
+    """Compare each written passage with each source separately."""
+    indexes = [(doc["id"], ngrams(doc["text"], 12)) for doc in docs]
+    for number, passage in enumerate(passages, 1):
+        candidates = ngrams(passage, 12)
+        for sid, source_grams in indexes:
+            matches = candidates & source_grams
+            if matches:
+                sequence = " ".join(sorted(matches)[0])
+                return f"Fragment {number}, źródło {sid}: {sequence}"
+    return None
+
+
 def check_draft(draft, facts, docs, dossier=None):
     policy = article_policy(facts, docs)
     if draft.get("publish") is not True:
@@ -957,8 +970,9 @@ def check_draft(draft, facts, docs, dossier=None):
     if len(set(body)) != len(body):
         raise Rejected("Powtórzone akapity.")
     source_text = " ".join(d["text"] for d in docs)
-    if ngrams(" ".join(passages), 12) & ngrams(source_text, 12):
-        raise CopiedPassage("Wykryto dosłowną sekwencję 12 słów.")
+    copied = copied_passage(passages, docs)
+    if copied:
+        raise CopiedPassage("Wykryto dosłowną sekwencję 12 słów. " + copied)
     numbers = set(re.findall(r"\d+(?:[.,]\d+)?", source_text))
     unmatched = set(re.findall(r"\d+(?:[.,]\d+)?", " ".join(passages))) - numbers
     if unmatched:

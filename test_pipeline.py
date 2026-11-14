@@ -1102,5 +1102,28 @@ class LengthCorrectionTests(unittest.TestCase):
         self.assertEqual(ai.calls, 4)
 
 
+
+class PassageBoundaryTests(unittest.TestCase):
+    def test_real_copy_reports_words_and_source(self):
+        text = " ".join("slowo" + str(i) for i in range(12))
+        result = n.copied_passage([text], [dict(id="S7", text=text)])
+        self.assertIn("S7", result)
+        self.assertIn(text, result)
+
+    def test_no_match_across_written_passage_boundary(self):
+        tokens = ["slowo" + str(i) for i in range(12)]
+        self.assertIsNone(n.copied_passage([" ".join(tokens[:6]), " ".join(tokens[6:])],
+                                         [dict(id="S1", text=" ".join(tokens))]))
+
+    def test_no_match_across_source_boundary(self):
+        tokens = ["slowo" + str(i) for i in range(12)]
+        self.assertIsNone(n.copied_passage([" ".join(tokens)],
+            [dict(id="S1", text=" ".join(tokens[:6])), dict(id="S2", text=" ".join(tokens[6:]))]))
+
+    def test_case_and_punctuation_do_not_hide_copy(self):
+        text = " ".join("slowo" + str(i) for i in range(12))
+        self.assertIsNotNone(n.copied_passage([text.upper() + "."], [dict(id="S1", text=text)]))
+
+
 if __name__ == "__main__":
     unittest.main()

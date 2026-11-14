@@ -1,14 +1,14 @@
-Sygnał Dnia 2.17
+Sygnał Dnia 2.18
 Rozpakuj ZIP. GitHub: Code -> Add file -> Upload files.
 Podmień generator.py, newsroom.py, test_pipeline.py. Commit changes.
 Actions -> Generate and publish news -> Run workflow -> main.
 
-Zakres krótkiej wiadomości nadal wynosi 160–300 słów akapitów.
-Model dostaje wyraźną instrukcję celowania w 220–240 słów, bez wliczania
-tytułu, podsumowania i śródtytułów. Błąd długości uruchamia jedną korektę
-jeśli wystarcza limitu 5 zapytań na korektę i wszystkie kontrole.
-Korekta korzysta z dossier i źródeł; nie wolno dopisywać informacji.
-Po korekcie tekst przechodzi wszystkie kontrole i końcową ocenę.
-To wspólna jedna próba poprawy artykułu, nie kolejne próby dla każdego błędu.
-114 testów offline przeszło, w tym za krótki tekst -> korekta -> kontrola
-oraz odrzucenie drugiego za krótkiego tekstu. Rzeczywiste API nie było testowane.
+Kontrola 12 słów porównuje każdy fragment artykułu z każdym źródłem osobno.
+Nie tworzy dopasowań przez połączenie końca jednego fragmentu i początku
+następnego, ani przez połączenie dwóch dokumentów źródłowych.
+Błąd wskazuje źródło, numer fragmentu i znalezioną sekwencję słów.
+Ten opis trafia też do istniejącej jednej próby korekty.
+Pozostałe kontrole oraz limit 5 wywołań nadal obowiązują.
+118 testów offline przeszło. Rzeczywiste API nie było testowane.
+Poprzedni log nie dowodzi, że ten konkretny błąd był fałszywym dopasowaniem.
+Nowa diagnostyka pozwoli to ocenić, jeśli zatrzymanie się powtórzy.
