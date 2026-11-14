@@ -990,5 +990,61 @@ class JsonResponseTests(unittest.TestCase):
         self.assertEqual(client.calls, 1)
 
 
+
+class RewriteTests(unittest.TestCase):
+    def test_rewrite_retains_final_review_and_budget(self):
+        docs, dossier, draft = fixture()
+        ai = RetryTests().client([dossier, draft, copy.deepcopy(draft), dict(approved=True, issues=[])])
+        real_check = n.check_draft
+        calls = []
+        def check(*args):
+            calls.append(1)
+            if len(calls) == 1:
+                raise n.CopiedPassage("Wykryto dosłowną sekwencję 12 słów.")
+            return real_check(*args)
+        entries = []
+        with patch.object(n, "collect", return_value=docs), patch.object(n, "check_draft", side_effect=check):
+            n.prepare_article(ai, None, [[dict(title="Euclid")]], entries)
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("rewrite", entries[0])
+        self.assertEqual(entries[0]["status"], "ZATWIERDZONO")
+
+    def test_second_copied_draft_is_rejected(self):
+        docs, dossier, draft = fixture()
+        ai = RetryTests().client([draft, draft])
+        ai.calls = 2
+        with patch.object(n, "check_draft", side_effect=n.CopiedPassage("Powielony tekst")):
+            with self.assertRaises(n.CopiedPassage):
+                n.checked_draft(ai, dossier, {}, docs, {}, {})
+        self.assertEqual(ai.calls, 4)
+
+    def test_no_rewrite_without_budget_for_review(self):
+        docs, dossier, draft = fixture()
+        ai = RetryTests().client([draft])
+        ai.calls = 3
+        with patch.object(n, "check_draft", side_effect=n.CopiedPassage("Powielony tekst")):
+            with self.assertRaises(n.CopiedPassage):
+                n.checked_draft(ai, dossier, {}, docs, {}, {})
+        self.assertEqual(ai.calls, 4)
+
+    def test_other_rejection_does_not_trigger_rewrite(self):
+        docs, dossier, draft = fixture()
+        ai = RetryTests().client([draft])
+        with patch.object(n, "check_draft", side_effect=n.Rejected("Niepotwierdzona liczba")):
+            with self.assertRaisesRegex(n.Rejected, "liczba"):
+                n.checked_draft(ai, dossier, {}, docs, {}, {})
+        self.assertEqual(ai.calls, 2)
+
+    def test_high_risk_reserves_extra_review(self):
+        docs, dossier, draft = fixture()
+        dossier["high_risk"] = True
+        ai = RetryTests().client([draft])
+        ai.calls = 2
+        with patch.object(n, "check_draft", side_effect=n.CopiedPassage("Powielony tekst")):
+            with self.assertRaises(n.CopiedPassage):
+                n.checked_draft(ai, dossier, {}, docs, {}, {})
+        self.assertEqual(ai.calls, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

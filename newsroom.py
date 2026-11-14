@@ -29,6 +29,10 @@ class CorrectableDossier(Rejected):
     """Invalid evidence or missing explanation; one correction may be attempted."""
 
 
+class CopiedPassage(Rejected):
+    """Draft contains a verbatim source passage."""
+
+
 class APIError(RuntimeError):
     """API/configuration failure; must be visible in Actions."""
 
@@ -944,7 +948,7 @@ def check_draft(draft, facts, docs, dossier=None):
         raise Rejected("Powtórzone akapity.")
     source_text = " ".join(d["text"] for d in docs)
     if ngrams(" ".join(passages), 12) & ngrams(source_text, 12):
-        raise Rejected("Wykryto dosłowną sekwencję 12 słów.")
+        raise CopiedPassage("Wykryto dosłowną sekwencję 12 słów.")
     numbers = set(re.findall(r"\d+(?:[.,]\d+)?", source_text))
     if set(re.findall(r"\d+(?:[.,]\d+)?", " ".join(passages))) - numbers:
         raise Rejected("Liczba niewystępująca w materiałach.")
@@ -1024,6 +1028,28 @@ odpowiedzią, jeśli materiał nie wystarcza. Brakujące dane pozostaw niepotwie
 """
 
 
+def checked_draft(ai, dossier, facts, docs, policy, entry):
+    draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
+    try:
+        length, used = check_draft(draft, facts, docs, dossier)
+    except CopiedPassage:
+        # One rewrite, then normal review(s); never spend their reserved budget.
+        required = 3 if dossier["high_risk"] else 2
+        if 5 - ai.calls < required:
+            raise
+        entry["rewrite"] = "Przeredagowanie po wykryciu sekwencji 12 słów ze źródła."
+        logging.info(entry["rewrite"])
+        draft = ai.ask(WRITE + "\nPRZEREDAGOWANIE: poprzednia wersja zawiera dosłowną "
+                       "sekwencję 12 słów ze źródła. Napisz ją ponownie własnymi słowami, "
+                       "zmieniając budowę zdań. Zachowaj fakty, liczby, nazwy, atrybucję "
+                       "i powiązania z faktami. Nie używaj synonimów zmieniających znaczenie "
+                       "ani nie dodawaj informacji. Zwróć cały artykuł w wymaganym JSON.",
+                       dict(dossier=dossier, documents=docs, previous_article=draft,
+                            length_policy=policy), tokens=12288)
+        length, used = check_draft(draft, facts, docs, dossier)
+    return draft, length, used
+
+
 def prepare_article(ai, reader, topics, diagnostics):
     """Try another topic only if the remaining API budget permits review."""
     for index, items in enumerate(topics, 1):
@@ -1052,8 +1078,7 @@ def prepare_article(ai, reader, topics, diagnostics):
             if 5 - ai.calls < required:
                 raise Rejected("Za mało wywołań API na tekst i wszystkie wymagane kontrole "
                                "(w tym kontrolę wysokiego ryzyka).")
-            draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
-            length, used = check_draft(draft, facts, docs, dossier)
+            draft, length, used = checked_draft(ai, dossier, facts, docs, policy, entry)
             verification = dict(documents=docs, dossier=dossier, article=draft, length_policy=policy,
                                 provenance_note=origin_note(dossier))
             review_result(ai.ask(VERIFY, verification, tokens=4096))

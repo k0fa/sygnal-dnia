@@ -1,16 +1,12 @@
-Sygnał Dnia 2.13
+Sygnał Dnia 2.14
 
 Rozpakuj ZIP. GitHub: Code -> Add file -> Upload files.
-Podmień generator.py, newsroom.py, test_pipeline.py w głównym katalogu.
-Commit changes, następnie Actions -> Generate and publish news -> Run workflow -> main.
+Podmień generator.py, newsroom.py, test_pipeline.py. Zapisz Commit changes.
+Actions -> Generate and publish news -> Run workflow -> main.
 
-Selekcja dopuszcza 1–5 materiałów, również od jednego wydawcy.
-To dopuszczenie do badania, a nie zgoda na publikację. Pojedynczy materiał
-musi później przejść kontrolę nazwanego pochodzenia attributed i dowodów.
-Dwie niezależne relacje nadal są wymagane w trybie independent.
-Zachowano minimalną ilość materiału i rozszerzone kontrole wysokiego ryzyka.
-Log nie zawiera listy ID Euclid, więc nie przesądza, czy przyczyną był
-jeden ID czy inna niepoprawna postać pola ids.
-Poprawka usuwa potwierdzoną niespójność wymagań selekcji i dossier.
-105 testów offline przeszło. Nie wykonano próby rzeczywistego API.
-Nie ma gwarancji publikacji konkretnego artykułu o Euclid.
+Po wykryciu sekwencji 12 słów ze źródła program raz prosi o przeredagowanie.
+Zmieniony artykuł przechodzi ponownie wszystkie kontrole oraz końcową ocenę.
+Limit 5 wywołań pozostaje aktywny. Przeredagowanie następuje tylko gdy
+pozostaje budżet na nie i wymagane kontrole. Kolejny błąd zatrzymuje publikację.
+Nie zmieniaj działającego modelu ani klucza.
+110 testów offline przeszło. Nie sprawdzono rzeczywistego API.
