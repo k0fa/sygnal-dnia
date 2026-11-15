@@ -921,7 +921,7 @@ class DossierCorrectionTests(unittest.TestCase):
         ai.ask = MagicMock(side_effect=original)
         n.validated_dossier(ai, docs, {})
         data = ai.ask.call_args.args[1]
-        self.assertEqual(data["documents"], docs)
+        self.assertEqual([{k: v for k, v in d.items() if k != "passages"} for d in data["documents"]], docs)
         self.assertIn("Brak uzasadnienia", data["validation_error"])
 
 
@@ -1127,3 +1127,35 @@ class PassageBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import copy
+import unittest
+import newsroom as n
+
+class PassageTests(unittest.TestCase):
+    def setUp(self):
+        self.docs = [{"id":"S1","text":"Pierwszy fakt.  Drugi fakt.\n" + " ".join("wyraz"+str(i) for i in range(110))}]
+    def test_exact_and_complete(self):
+        before = copy.deepcopy(self.docs)
+        data = n.evidence_documents(self.docs)
+        self.assertEqual(self.docs, before)
+        for passage in data[0]["passages"].values():
+            self.assertIn(passage, self.docs[0]["text"])
+        self.assertTrue(list(data[0]["passages"].values())[-1].endswith("wyraz109"))
+    def test_resolves(self):
+        d = {"facts":[{"evidence":[{"source":"S1","passage_id":"P1"}]}]}
+        n.resolve_fact_passages(d,self.docs)
+        self.assertIn(d["facts"][0]["evidence"][0]["quote"], self.docs[0]["text"])
+    def test_unknown_source_or_passage(self):
+        for sid,pid in [("S2","P1"),("S1","P999"),("S1",[])]:
+            with self.subTest(sid=sid,pid=pid), self.assertRaises(n.CorrectableDossier):
+                n.resolve_fact_passages({"facts":[{"evidence":[{"source":sid,"passage_id":pid}]}]}, self.docs)
+    def test_conflicting_quote_is_not_silently_repaired(self):
+        with self.assertRaises(n.CorrectableDossier):
+            n.resolve_fact_passages({"facts":[{"evidence":[{"source":"S1","passage_id":"P1","quote":"wymyślony cytat"}]}]}, self.docs)
+    def test_legacy_quotes_preserved(self):
+        d={"facts":[{"evidence":[{"source":"S1","quote":"stary format"}]}]}
+        before=copy.deepcopy(d)
+        n.resolve_fact_passages(d,self.docs)
+        self.assertEqual(d,before)

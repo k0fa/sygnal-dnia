@@ -1,11 +1,15 @@
-Sygnał Dnia 2.19 — diagnostyka nazwy źródła
+Sygnał Dnia — poprawka 2.20
+1. Rozpakuj ZIP.
+2. W repozytorium k0fa/sygnal-dnia wybierz Code > Add file > Upload files.
+3. Wgraj do głównego katalogu trzy pliki: newsroom.py, generator.py, test_pipeline.py.
+4. Zapisz Commit changes.
+5. Actions > Generate and publish news > Run workflow > main.
+Uruchom nowe wykonanie, nie ponawiaj starego commitu.
+Nie zmieniaj klucza API, modelu ani workflow.
 
-Podmień tylko newsroom.py przez Code -> Add file -> Upload files.
-Commit changes, następnie Actions -> Generate and publish news -> Run workflow.
-
-Zmiana nie osłabia kontroli ani nie poprawia automatycznie treści.
-Błąd atrybucji pokaże oczekiwaną nazwę, podsumowanie (do 220 znaków)
-i pierwszy akapit (do 300 znaków). To pozwoli rozróżnić rzeczywisty brak
-autora od różnicy w jego zapisie.
-Prześlij nowe podsumowanie, jeśli błąd się powtórzy.
-Sprawdzono składnię Python. Nie uruchamiano rzeczywistego API.
+Zmiana: model wybiera identyfikatory fragmentów dowodowych dla faktów.
+Program przypisuje do nich dosłowny tekst źródła. Zachowano weryfikację
+znaczenia twierdzeń, pochodzenia i ryzyka. To nie uzupełnia brakujących
+materiałów pierwotnych i nie gwarantuje publikacji każdego tematu.
+Zachowano zgodność z wcześniejszym formatem quote.
+Sprawdzenie: 123 testy offline OK. Nie wykonano testu z prawdziwym API.

@@ -1022,14 +1022,65 @@ def review_result(review):
             review.get("issues", "Brak uzasadnienia modelu.")))
 
 
+
+def evidence_documents(docs):
+    """Expose deterministic, overlapping excerpts without changing source text."""
+    result = []
+    for doc in docs:
+        text = doc["text"]
+        tokens = list(re.finditer(r"\S+", text))
+        passages = {}
+        for start in range(0, len(tokens), 25):
+            end = min(start + 50, len(tokens))
+            passages[f"P{len(passages) + 1}"] = text[tokens[start].start():tokens[end - 1].end()]
+        result.append(dict(doc, passages=passages))
+    return result
+
+
+def resolve_fact_passages(dossier, docs):
+    """Resolve local IDs only. Unknown IDs and contradictory quotes are rejected."""
+    sources = {d["id"]: d for d in evidence_documents(docs)}
+    facts = dossier.get("facts", [])
+    if not isinstance(facts, list):
+        return
+    for fact in facts:
+        if not isinstance(fact, dict) or not isinstance(fact.get("evidence"), list):
+            continue
+        for ev in fact["evidence"]:
+            if not isinstance(ev, dict) or "passage_id" not in ev:
+                continue
+            sid, pid = ev.get("source"), ev["passage_id"]
+            if not isinstance(sid, str) or not isinstance(pid, str):
+                raise CorrectableDossier("Niepoprawny identyfikator fragmentu dowodowego.")
+            passage = sources.get(sid, {}).get("passages", {}).get(pid)
+            if passage is None:
+                raise CorrectableDossier(f"Nieznany fragment dowodowy: {sid}/{pid}.")
+            if "quote" in ev and (not isinstance(ev["quote"], str) or normalized(ev["quote"]) != normalized(passage)):
+                raise CorrectableDossier(f"Cytat sprzeczny ze wskazanym fragmentem: {sid}/{pid}.")
+            ev["quote"] = passage
+
+
+PASSAGE_INSTRUCTIONS = """
+DOWODY FAKTÓW — obowiązuje ten format zamiast przepisywania quote:
+Każdy dokument ma passages: słownik identyfikatorów i dosłownych fragmentów.
+Dla facts[].evidence zwracaj {"source":"S1","passage_id":"P1"}.
+Wybieraj WYŁĄCZNIE istniejący identyfikator w danym dokumencie.
+Fragment musi bezpośrednio uzasadniać claim, łącznie z liczbami i zastrzeżeniami.
+Możesz wskazać kilka fragmentów. Nie zwracaj quote w dowodach faktów —
+program pobierze jego treść. Nie zmieniaj znaczenia źródła.
+Dla origin oraz primary_evidence zachowaj dotychczasowy format i dokładne cytaty.
+Numer fragmentu potwierdza jego istnienie, NIE prawdziwość ani pierwotność źródła.
+"""
+
 def validated_dossier(ai, docs, entry):
-    dossier = ai.ask(EXTRACT, dict(documents=docs))
+    dossier = ai.ask(EXTRACT + PASSAGE_INSTRUCTIONS, dict(documents=evidence_documents(docs)))
     for attempt in range(2):
         entry["risk"] = dict(high=dossier.get("high_risk"),
                              categories=dossier.get("risk_categories"),
                              reason=diagnostic_text(dossier.get("risk_reason", "Brak uzasadnienia")))
         logging.info("Ocena ryzyka: %s", json.dumps(entry["risk"], ensure_ascii=False))
         try:
+            resolve_fact_passages(dossier, docs)
             return dossier, check_dossier(dossier, docs)
         except CorrectableDossier as exc:
             # Reserve draft + review, and extra review for any possible high risk.
@@ -1039,8 +1090,8 @@ def validated_dossier(ai, docs, entry):
                 raise
             entry["correction"] = diagnostic_text(exc)
             logging.warning("Jedna korekta dossier w limicie 5 żądań: %s", entry["correction"])
-            dossier = ai.ask(EXTRACT + CORRECT_DOSSIER, dict(
-                documents=docs, previous_dossier=dossier, validation_error=str(exc)))
+            dossier = ai.ask(EXTRACT + CORRECT_DOSSIER + PASSAGE_INSTRUCTIONS, dict(
+                documents=evidence_documents(docs), previous_dossier=dossier, validation_error=str(exc)))
     raise Rejected("Nie udało się poprawić dossier.")
 
 
