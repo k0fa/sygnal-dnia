@@ -738,7 +738,10 @@ def check_attribution(draft, dossier):
     name = normalized(origin["name"]["value"]).casefold()
     lead = draft["sections"][0]["paragraphs"][0]["text"]
     if any(name not in normalized(text).casefold() for text in (draft["summary"], lead)):
-        raise Rejected("Brak nazwy pierwotnego źródła w podsumowaniu lub pierwszym akapicie.")
+        raise Rejected("Brak nazwy pierwotnego źródła w podsumowaniu lub pierwszym akapicie. "
+                       "Oczekiwana nazwa: " + diagnostic_text(origin["name"]["value"], 140) +
+                       " | Podsumowanie: " + diagnostic_text(draft["summary"], 220) +
+                       " | Pierwszy akapit: " + diagnostic_text(lead, 300))
     title = normalized(draft["title"]).casefold()
     if origin["kind"] == "poll":
         if "sondaż" not in title:

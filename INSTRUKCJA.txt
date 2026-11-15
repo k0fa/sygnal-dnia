@@ -1,14 +1,11 @@
-Sygnał Dnia 2.18
-Rozpakuj ZIP. GitHub: Code -> Add file -> Upload files.
-Podmień generator.py, newsroom.py, test_pipeline.py. Commit changes.
-Actions -> Generate and publish news -> Run workflow -> main.
+Sygnał Dnia 2.19 — diagnostyka nazwy źródła
 
-Kontrola 12 słów porównuje każdy fragment artykułu z każdym źródłem osobno.
-Nie tworzy dopasowań przez połączenie końca jednego fragmentu i początku
-następnego, ani przez połączenie dwóch dokumentów źródłowych.
-Błąd wskazuje źródło, numer fragmentu i znalezioną sekwencję słów.
-Ten opis trafia też do istniejącej jednej próby korekty.
-Pozostałe kontrole oraz limit 5 wywołań nadal obowiązują.
-118 testów offline przeszło. Rzeczywiste API nie było testowane.
-Poprzedni log nie dowodzi, że ten konkretny błąd był fałszywym dopasowaniem.
-Nowa diagnostyka pozwoli to ocenić, jeśli zatrzymanie się powtórzy.
+Podmień tylko newsroom.py przez Code -> Add file -> Upload files.
+Commit changes, następnie Actions -> Generate and publish news -> Run workflow.
+
+Zmiana nie osłabia kontroli ani nie poprawia automatycznie treści.
+Błąd atrybucji pokaże oczekiwaną nazwę, podsumowanie (do 220 znaków)
+i pierwszy akapit (do 300 znaków). To pozwoli rozróżnić rzeczywisty brak
+autora od różnicy w jego zapisie.
+Prześlij nowe podsumowanie, jeśli błąd się powtórzy.
+Sprawdzono składnię Python. Nie uruchamiano rzeczywistego API.
