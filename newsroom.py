@@ -491,10 +491,10 @@ Korzystaj wyłącznie z przekazanych materiałów. Nie wymyślaj faktów ani adr
 Zachowuj daty, liczby, niepewność, atrybucję zarzutów i domniemanie niewinności.
 Nie kopiuj zdań 1:1. Odpowiadaj wyłącznie poprawnym obiektem JSON."""
 
-SELECT = """Wybierz maksymalnie 3 konkretne aktualne wydarzenia z listy RSS.
+SELECT = """Wybierz maksymalnie 6 konkretnych aktualnych wydarzeń z listy RSS.
 Grupuj materiały o TYM SAMYM wydarzeniu, a nie szerokiej kategorii.
 Szukaj wspólnego zdarzenia, osób/instytucji i czasu, także przy różnych nagłówkach.
-Każda grupa: 1–5 różnych identyfikatorów id. Preferuj dwa publisher_group.
+Każda grupa: 1–5 różnych identyfikatorów id. Preferuj co najmniej dwa publisher_group.
 Pojedynczy artykuł też może być kandydatem: po pobraniu tekstu musi przejść
 kontrolę pochodzenia attributed, dowodów i wystarczającej ilości materiału.
 Różne serwisy Interii/GeekWeek to jeden wydawca. Nie powtarzaj tematów z recent.
@@ -564,7 +564,13 @@ VERIFY += """\nW trybie attributed nie wymagaj dwóch niezależnych relacji: spr
 
 EXTRACT += "\nOCENA RYZYKA I ROLI DOKUMENTÓW:\nZawsze zwróć risk_reason (konkretne uzasadnienie) i risk_categories (lista).\nKategorie: criminal_allegation, casualties, medical, financial_advice,\nactive_conflict, public_safety, unconfirmed_personal_allegation.\nhigh_risk=true dokładnie wtedy, gdy lista nie jest pusta. Sama polityka, zmiana\nstanowiska, sondaż albo opis wyników finansowych NIE oznacza wysokiego ryzyka.\nOceniaj rzeczywiste twierdzenia: niepewne zarzuty wobec osoby, oskarżenia karne,\nofiary, działania wojenne, porady zdrowotne/inwestycyjne i zagrożenia wymagają\nrozszerzonej weryfikacji. Nie zmniejszaj ryzyka, by umożliwić publikację.\nDla high_risk=true podaj risk_fact_ids (wszystkie fakty o takim ryzyku) oraz\nprimary_evidence: [{\"source\":\"S1\",\"kind\":\"original_interview\",\n\"is_original\":true,\"author\":\"dokładna nazwa autora/instytucji\",\n\"authorship_quote\":\"dokładny fragment 30–500 znaków z text, zawierający autora\",\n\"why_primary\":\"dlaczego TA publikacja jest oryginalnym materiałem dla tych faktów\",\n\"supports_facts\":[\"F1\"]}].\nDozwolone kind: official_document, original_statement, original_research,\noriginal_dataset, firsthand_report, original_interview.\nŹródło pierwotne to rola KONKRETNEGO pobranego dokumentu, nie domena.\nCytat urzędnika w wtórnym artykule NIE zmienia artykułu w źródło pierwotne.\nTak samo domena urzędowa nie gwarantuje aktualności ani adekwatności.\nOryginalny wywiad lub własny reportaż mogą być pierwotne, jeśli tekst wyraźnie\npotwierdza autorstwo i bezpośredni charakter relacji. Sam podpis autora nie wystarcza.\nNie zakładaj, że dokument istnieje, tylko dlatego że inna strona go przywołuje.\nŹródła muszą występować w documents. Dowody faktów ryzyka muszą wskazywać na\nte same dokumenty i rzeczywiście wspierać te fakty.\nKomunikat zainteresowanej strony dowodzi jej oświadczenia, a nie automatycznie\nprawdziwości opisanych zdarzeń; zachowaj atrybucję w claim.\nGdy nie znaleziono pierwotnych dowodów, nie wymyślaj ich: primary_evidence=[].\nNIE pomijaj pola authorship_quote — MUSI zawierać dokładny fragment z text\nźródła, który potwierdza autorstwo. Brak authorship_quote = ready=false.\nGdy nie znaleziono pierwotnych dowodów dla faktów wysokiego ryzyka, ready=false.\n"
 
-SELECT += """\nWybieraj do trzech tematów możliwych do rzetelnego opisania, nie tylko najbardziej\nsensacyjne nagłówki. Jeśli są dostępne, uwzględnij temat technologiczny, naukowy,\nkulturalny lub opis konkretnego badania/komunikatu z nazwanym autorem. Preferuj\njasne pochodzenie i dostępny materiał. Nie zgaduj dostępności źródeł z samego tytułu.\nPrzy wojnie i niepotwierdzonych zarzutach preferuj widoczne wskazanie dokumentu\npierwotnego. Nie obniżaj oceny ryzyka, by umożliwić publikację.\n"""
+SELECT += """\nWybieraj do sześciu tematów możliwych do rzetelnego opisania, nie tylko najbardziej
+sensacyjne nagłówki. Jeśli są dostępne, uwzględnij temat technologiczny, naukowy,
+kulturalny lub opis konkretnego badania/komunikatu z nazwanym autorem. Preferuj
+jasne pochodzenie i dostępny materiał. Nie zgaduj dostępności źródeł z samego tytułu.
+Przy wojnie i niepotwierdzonych zarzutach preferuj widoczne wskazanie dokumentu
+pierwotnego. Nie obniżaj oceny ryzyka, by umożliwić publikację.
+"""
 
 VERIFY += """\nSprawdź również high_risk, risk_reason i risk_categories. Jeśli dossier ukryło\nryzyko lub błędnie zaniżyło jego ocenę, approved=false. Nie zmieniaj klasyfikacji\nw celu obejścia kontroli. Opis roli dokumentu nie jest dowodem sam w sobie.\n"""
 

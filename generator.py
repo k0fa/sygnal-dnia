@@ -48,7 +48,7 @@ def select_topics(ai, queue, records, diagnostics=None):
         audit.append("Uzasadnienie Gemini: " + diagnostic_text(reason if isinstance(reason, str)
                      and reason.strip() else "Model nie podał uzasadnienia.", 1200))
     selected, seen_groups = [], set()
-    # Validate all returned groups, then retain up to three valid groups.
+    # Validate all returned groups, then retain up to six valid groups.
     for index, topic in enumerate(topics[:20], 1):
         prefix = f"Grupa {index}: "
         if not isinstance(topic, dict):
@@ -82,7 +82,7 @@ def select_topics(ai, queue, records, diagnostics=None):
         seen_groups.add(signature)
         selected.append(items)
         audit.append(prefix + "przyjęta; " + ", ".join(publishers))
-        if len(selected) == 3:
+        if len(selected) == 6:
             break
     for entry in audit:
         logging.info("Wybór tematów: %s", entry)
