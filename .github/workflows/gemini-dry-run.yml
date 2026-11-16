@@ -6,6 +6,9 @@ on:
       - ai/test-gemini
     paths:
       - '.github/workflows/gemini-dry-run.yml'
+      - 'tools/gemini_dry_run.py'
+      - 'newsroom.py'
+      - 'test_prompt_quality.py'
 
 permissions:
   contents: read
