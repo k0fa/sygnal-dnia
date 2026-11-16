@@ -737,6 +737,7 @@ class SourceRelevanceRegressionTests(unittest.TestCase):
 
 
 
+@unittest.skipUnless(DEPS, "Integration requires requirements.txt")
 class TopicSelectionRegressionTests(unittest.TestCase):
     def candidates(self):
         return [dict(id="hash1", title="Konkretny temat numer jeden",
@@ -816,6 +817,20 @@ class OriginEvidenceRegressionTests(unittest.TestCase):
                            evidence=[dict(source="S1", quote=quote)])))
         return dossier, docs
 
+    def attributed(self, kind="poll"):
+        """Helper from ProvenanceTests."""
+        docs, dossier, draft = fixture()
+        quote = "Badanie wykonała Pracownia Alfa na zlecenie Portalu Beta w ostatnim tygodniu."
+        docs[0]["text"] += " " + quote
+        dossier.update(source_mode="attributed", independent=False,
+                       origin=dict(kind=kind, name=dict(value="Pracownia Alfa",
+                           evidence=[dict(source="S1", quote=quote)])))
+        if kind == "poll":
+            dossier["origin"]["poll"] = dict(
+                commissioner=dict(value="Portal", evidence=[dict(source="S1", quote=quote)]),
+                fieldwork=None, sample=None, method=None)
+        return docs, dossier
+
     def test_short_exact_statement_evidence_has_context(self):
         dossier, docs = self.origin("Microsoft wydał komunikat")
         origin = n.check_origin(dossier, docs)
@@ -848,6 +863,26 @@ class OriginEvidenceRegressionTests(unittest.TestCase):
         with self.assertRaisesRegex(n.Rejected, "brak source_mode"):
             n.check_origin(dict(independent=False), [])
 
+    def test_missing_quote_in_origin_name_evidence_correctable(self):
+        """Brak quote w origin.name.evidence -> CorrectableDossier (można skorygować)."""
+        docs, dossier = self.attributed("dispatch")
+        dossier["origin"]["name"]["evidence"][0].pop("quote", None)
+        with self.assertRaisesRegex(n.CorrectableDossier, "Brak dowodu pochodzenia.*quote jest wymagany"):
+            n.check_origin(dossier, docs)
+
+    def test_null_quote_in_origin_name_evidence_correctable(self):
+        """quote=null w origin.name.evidence -> CorrectableDossier."""
+        docs, dossier = self.attributed("dispatch")
+        dossier["origin"]["name"]["evidence"][0]["quote"] = None
+        with self.assertRaisesRegex(n.CorrectableDossier, "Brak dowodu pochodzenia.*quote jest wymagany"):
+            n.check_origin(dossier, docs)
+
+    def test_missing_quote_in_origin_poll_evidence_correctable(self):
+        """Brak quote w origin.poll.*.evidence -> CorrectableDossier."""
+        docs, dossier = self.attributed("poll")
+        dossier["origin"]["poll"]["commissioner"]["evidence"][0].pop("quote", None)
+        with self.assertRaisesRegex(n.CorrectableDossier, "Brak dowodu pochodzenia.*quote jest wymagany"):
+            n.check_origin(dossier, docs)
 
 
 class DossierCorrectionTests(unittest.TestCase):
@@ -924,6 +959,86 @@ class DossierCorrectionTests(unittest.TestCase):
         self.assertEqual([{k: v for k, v in d.items() if k != "passages"} for d in data["documents"]], docs)
         self.assertIn("Brak uzasadnienia", data["validation_error"])
 
+    def test_missing_quote_origin_corrected_with_full_review(self):
+        """Brak quote w origin -> korekta dossier + pełny review (5 wywołań)."""
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["source_mode"] = "attributed"
+        bad["independent"] = False
+        bad["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1")]))  # brak quote
+        # Poprawiony dossier z quote
+        good_origin = copy.deepcopy(good)
+        good_origin["source_mode"] = "attributed"
+        good_origin["independent"] = False
+        good_origin["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1", quote="Pracownia Alfa potwierdza.")]))
+        # docs[0] musi zawierać quote
+        docs[0]["text"] += " Pracownia Alfa potwierdza."
+        # Draft musi mieć atrybucję w summary i pierwszym akapicie
+        draft = copy.deepcopy(draft)
+        draft["title"] = "Pracownia Alfa: " + draft["title"]
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        ai, entries, _ = self.run_article([bad, good_origin, draft, dict(approved=True, issues=[])], docs)
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("Brak dowodu pochodzenia", entries[0]["correction"])
+        self.assertEqual(entries[0]["status"], "ZATWIERDZONO")
+
+    def test_missing_quote_origin_correction_blocked_by_budget(self):
+        """Brak quote w origin high-risk -> brak budżetu na korektę + extra review -> Rejected."""
+        docs, bad, _ = fixture()
+        bad.update(high_risk=True, risk_categories=["active_conflict"], risk_reason="Test.")
+        bad["source_mode"] = "attributed"
+        bad["independent"] = False
+        bad["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1")]))  # brak quote
+        ai = RetryTests().client([bad])  # tylko 1 odpowiedź (błędna)
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "Brak dowodu pochodzenia"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 2)  # SELECT + EXTRACT (błędny), bez korekty
+
+    def test_missing_real_evidence_never_publishes(self):
+        """Fałszywy quote w origin -> korekta nie pomaga, brak prawdziwego dowodu -> Rejected."""
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["source_mode"] = "attributed"
+        bad["independent"] = False
+        bad["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1", quote="Wymyślony cytat.")]))
+        # Draft z atrybucją (choć fałszywa)
+        draft = copy.deepcopy(draft)
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        # Korekta też z fałszywym quote
+        bad2 = copy.deepcopy(bad)
+        bad2["origin"]["name"]["evidence"][0]["quote"] = "Inny wymyślony cytat."
+        ai = RetryTests().client([bad, bad2])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "nie istnieje"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 3)  # SELECT + EXTRACT + korekta
+
+    def test_valid_origin_evidence_passes(self):
+        """Poprawny quote w origin przechodzi walidację."""
+        docs, good, draft = fixture()
+        good["source_mode"] = "attributed"
+        good["independent"] = False
+        quote = "Pracownia Alfa wydała komunikat o wyniku badań."
+        docs[0]["text"] += " " + quote
+        good["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1", quote=quote)]))
+        # Draft musi mieć atrybucję
+        draft = copy.deepcopy(draft)
+        draft["title"] = "Pracownia Alfa: " + draft["title"]
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        ai = RetryTests().client([good, draft, dict(approved=True, issues=[])])
+        with patch.object(n, "collect", return_value=docs):
+            result = n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 4)
+        self.assertEqual(result[0][0]["title"], "Test")
 
 
 class JsonResponseTests(unittest.TestCase):
@@ -989,6 +1104,27 @@ class JsonResponseTests(unittest.TestCase):
             client.ask("prompt", {})
         self.assertEqual(client.calls, 1)
 
+    def test_fifth_call_blocks_further_requests(self):
+        """Po 5 wywołaniach API dalsze żądania są blokowane."""
+        client = n.Gemini("test")
+        client.calls = 5
+        client.opener.open = MagicMock()
+        with self.assertRaises(n.APIError):
+            client.ask("prompt", {})
+        client.opener.open.assert_not_called()
+
+    def test_fourth_call_allows_one_more(self):
+        """4. wywołanie pozwala na 5., 5. blokuje kolejne."""
+        client = n.Gemini("test")
+        client.calls = 4
+        client.opener.open = MagicMock(return_value=self.response('{"ready":true}', "STOP"))
+        with patch.object(n.time, "sleep"):
+            result = client.ask("prompt", {})
+        self.assertEqual(client.calls, 5)
+        self.assertEqual(result, {"ready": True})
+        # 6. wywołanie blokowane
+        with self.assertRaises(n.APIError):
+            client.ask("prompt", {})
 
 
 class RewriteTests(unittest.TestCase):
@@ -1159,3 +1295,23 @@ class PassageTests(unittest.TestCase):
         before=copy.deepcopy(d)
         n.resolve_fact_passages(d,self.docs)
         self.assertEqual(d,before)
+
+    def test_valid_passage_id_without_quote_passes(self):
+        """Poprawny passage_id bez quote w facts -> passage zostaje rozwiązany."""
+        d = {"facts": [{"evidence": [{"source": "S1", "passage_id": "P1"}]}]}
+        n.resolve_fact_passages(d, self.docs)
+        self.assertIn("quote", d["facts"][0]["evidence"][0])
+        self.assertIsInstance(d["facts"][0]["evidence"][0]["quote"], str)
+        self.assertGreater(len(d["facts"][0]["evidence"][0]["quote"]), 0)
+
+    def test_nonexistent_passage_id_rejected(self):
+        """Nieistniejący passage_id -> CorrectableDossier."""
+        d = {"facts": [{"evidence": [{"source": "S1", "passage_id": "P999"}]}]}
+        with self.assertRaises(n.CorrectableDossier):
+            n.resolve_fact_passages(d, self.docs)
+
+    def test_unknown_source_in_passage_id_rejected(self):
+        """Nieznane źródło w passage_id -> CorrectableDossier."""
+        d = {"facts": [{"evidence": [{"source": "S999", "passage_id": "P1"}]}]}
+        with self.assertRaises(n.CorrectableDossier):
+            n.resolve_fact_passages(d, self.docs)
