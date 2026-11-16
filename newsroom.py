@@ -622,6 +622,36 @@ W polu reason krótko uzasadnij kolejność i zaznacz, jeśli nie znaleziono
 żadnego odpowiedniego tematu o niższym ryzyku.
 """
 
+# HERMES_PROMPT_QUALITY_20261116
+# Dodatkowe instrukcje dla modelu, bez oslabiania walidatorow.
+WRITE += """
+KONTROLA ORYGINALNOŚCI PRZED ZWROTEM JSON:
+- Nie przepisuj z artykułów źródłowych ani z cytatów w dossier żadnej
+  sekwencji 12 kolejnych słów. Dotyczy to tytułu, podsumowania,
+  śródtytułów i każdego akapitu. Sprawdź to przed odpowiedzią.
+- Szczególnie uważaj na wyliczenia finansowe i urzędowe formuły:
+  liczby, jednostki, nazwy i znaczenie pozostaw zgodne z dowodami,
+  lecz budowę zdań i kolejność wyrazów opracuj samodzielnie.
+- Nie rozwiązuj problemu kopiowania przez dodawanie nowych informacji,
+  zmianę kwot lub pomijanie istotnych zastrzeżeń. Gdy nie można napisać
+  wiernego faktom tekstu własnymi słowami, zwróć publish=false.
+- Wymagane referencje facts zachowaj dla KAŻDEGO elementu artykułu.
+"""
+EXTRACT += """
+KONTROLA POWIĄZAŃ DOWODÓW PIERWOTNYCH PRZED ZWROTEM JSON:
+- risk_fact_ids to identyfikatory istniejących faktów wysokiego ryzyka.
+- W każdym primary_evidence[].supports_facts wskazuj tylko fakty
+  znajdujące się w risk_fact_ids, bez wymyślonych identyfikatorów.
+- Dla każdego F wskazanego w supports_facts jego evidence musi
+  wskazywać TEN SAM source co primary_evidence[].source, a fragment
+  musi rzeczywiście wspierać konkretną tezę dotyczącą ryzyka.
+- is_original=true tylko przy udokumentowanej pierwotności dokumentu.
+  Nie nazywaj przedruku z cytatem urzędnika źródłem pierwotnym.
+- Jeśli nie da się przypisać wszystkich ryzykownych faktów do
+  adekwatnych oryginalnych dokumentów, zwróć ready=false zamiast
+  wymyślać powiązania albo zaniżać high_risk.
+"""
+
 class Gemini:
     def __init__(self, key):
         self.key = key
