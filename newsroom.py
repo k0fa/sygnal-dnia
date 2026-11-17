@@ -647,6 +647,25 @@ KONTROLA ORYGINALNOŚCI PRZED ZWROTEM JSON:
   zmianę kwot lub pomijanie istotnych zastrzeżeń. Gdy nie można napisać
   wiernego faktom tekstu własnymi słowami, zwróć publish=false.
 - Wymagane referencje facts zachowaj dla KAŻDEGO elementu artykułu.
+
+KONTROLA DAT I DOWODÓW PRZED ZWROTEM JSON:
+- Każda konkretna data (dzień, miesiąc, rok, termin lub przedział dat)
+  w title, summary, heading i paragraph.text musi być wyraźnie potwierdzona
+  przez evidence faktów wymienionych w title_facts, summary_facts,
+  section.facts albo paragraph.facts właściwego fragmentu.
+- Nie przenoś daty publikacji źródła na datę wydarzenia. Nie dopisuj roku,
+  miesiąca ani dnia, których nie potwierdza powiązany dowód.
+- Jeśli data jest niepotwierdzona, usuń ją tylko gdy nie zmieni to znaczenia;
+  jeśli jest niezbędna do rzetelnego opisania wydarzenia, zwróć publish=false.
+
+OSTATECZNA KONTROLA CAŁEGO TEKSTU PRZED ZWROTEM JSON:
+- Ponownie sprawdź WSZYSTKIE liczby, jednostki, kwoty, waluty, procenty,
+  punkty procentowe, daty i identyfikatory faktów, także po każdej korekcie.
+  Każdy z tych elementów musi odpowiadać cytatom evidence właściwych faktów.
+- Sprawdź, czy żadna część artykułu nie zawiera 12 kolejnych słów
+  dosłownie przepisanych ze źródeł. Parafrazuj składnię, nie fakty.
+- Nie naprawiaj jednego błędu kosztem nowej liczby, daty, tezy lub braku
+  atrybucji. Jeśli nie da się zachować zgodności z dowodami, publish=false.
 """
 EXTRACT += """
 KONTROLA POWIĄZAŃ DOWODÓW PIERWOTNYCH PRZED ZWROTEM JSON:
@@ -1284,7 +1303,14 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
                        "Jeśli błąd dotyczy kopiowania, napisz tekst własnymi słowami, "
                        "zmieniając budowę zdań. Zachowaj fakty, liczby, nazwy, atrybucję "
                        "i powiązania z faktami. Nie używaj synonimów zmieniających znaczenie "
-                       "ani nie dodawaj informacji. Zwróć cały artykuł w wymaganym JSON.",
+                       "ani nie dodawaj informacji. Po naprawieniu validation_error przeprowadź "
+                       "PONOWNĄ KONTROLĘ CAŁEGO artykułu: title, summary, wszystkie heading "
+                       "i paragraph.text. Sprawdź wszystkie daty, liczby, kwoty, waluty, "
+                       "jednostki i odwołania do fact_id względem evidence właściwych "
+                       "faktów, nawet gdy pierwotny błąd dotyczył tylko kopiowania tekstu. "
+                       "Nie dodawaj niepotwierdzonej daty, nie kopiuj 12 kolejnych słów "
+                       "ze źródeł. Jeśli weryfikacja nie jest możliwa, zwróć publish=false. "
+                       "Zwróć cały artykuł w wymaganym JSON.",
                        dict(dossier=dossier, documents=docs, previous_article=draft,
                             validation_error=str(exc), length_policy=policy), tokens=12288)
         length, used = check_draft(draft, facts, docs, dossier)
