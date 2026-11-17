@@ -542,6 +542,11 @@ Na końcu omów istotne niewiadome, bez prognoz niemających podstaw.
 Każdy akapit, tytuł, podsumowanie i śródtytuł musi wskazywać id faktów,
 uzasadniających WSZYSTKIE twierdzenia. Zwykły tekst, bez HTML, Markdown,
 linków, dosłownych cytatów i znaczników.
+LICZBY: Wszystkie wartości liczbowe muszą wynikać z udokumentowanych faktów.
+Zachowaj zapis wartości zgodny ze źródłem (separator dziesiętny, grupowanie tysięcy).
+Nie wykonuj własnych obliczeń, przeliczeń ani zaokrągleń.
+Nie dodawaj wartości niepotwierdzonych w materiałach źródłowych.
+Jeśli istotnej liczby nie można potwierdzić, zwróć publish=false.
 Zwróć {"publish":true,"title":"...","title_facts":["F1"],
 "summary":"...","summary_facts":["F1"],
 "sections":[{"heading":"...","facts":["F1"],"paragraphs":[
@@ -1022,6 +1027,106 @@ def check_draft(draft, facts, docs, dossier=None):
         raise UnsupportedNumber("Liczby bez zgodnego zapisu w źródłach: " +
                                 ", ".join(sorted(unmatched)) +
                                 ". Zweryfikuj wartość, jednostkę i sposób zapisu.")
+
+    # Editorial numeric guard: numbers must occur in evidence quoted for the
+    # same fact IDs, with matching complete units. This is lexical validation,
+    # not a substitute for checking who or what a number describes.
+    month_names = ("stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
+                   "lipca", "sierpnia", "września", "października", "listopada", "grudnia")
+    number_token = r"\d+(?:[.,]\d+)?"
+    scale_forms = {
+        "tys": r"tys\.?|tysiąc|tysiąca|tysiące|tysięcy",
+        "mln": r"mln|milion|miliona|miliony|milionów",
+        "mld": r"mld|miliard|miliarda|miliardy|miliardów",
+    }
+    currency_forms = {
+        "zł": r"zł|pln|złoty|złote|złotych",
+        "eur": r"eur|euro",
+        "usd": r"usd|dolar|dolara|dolary|dolarów",
+    }
+    other_forms = {
+        "pp": r"p\.p\.|punkty\s+procentowe|punktów\s+procentowych|punktu\s+procentowego",
+        "%": r"%|procent|procenta|procenty|procentów",
+        "kg": r"kg|kilogram|kilograma|kilogramy|kilogramów",
+        "km": r"km|kilometr|kilometra|kilometry|kilometrów",
+        "t": r"t|tona|tonę|tony|ton|tonę|toną",
+        "rok": r"rok|roku|lata|lat|r\.",
+    }
+
+    def alternatives(forms):
+        # Prefer longer spellings to shorter prefixes (e.g. 'milionów' over 'milion').
+        return "(?:" + "|".join(sorted(forms.values(), key=len, reverse=True)) + ")"
+
+    date_rx = re.compile(
+        rf"(?<!\w)({number_token})\s+({'|'.join(month_names)})\s+((?:19|20)\d{{2}})(?:\s+r\.)?(?!\w)",
+        re.IGNORECASE,
+    )
+    # Require the entire unit; 't' must never match the first letter of 'turystów'.
+    amount_rx = re.compile(
+        rf"(?<!\w)({number_token})\s+({alternatives(scale_forms)})"
+        rf"(?:\s+({alternatives(currency_forms)}))?(?!\w)",
+        re.IGNORECASE,
+    )
+    plain_unit_rx = re.compile(
+        rf"(?<!\w)({number_token})\s*({alternatives({**currency_forms, **other_forms})})(?!\w)",
+        re.IGNORECASE,
+    )
+    bare_rx = re.compile(rf"(?<!\w)({number_token})(?!\w)")
+
+    def canonical_unit(value, groups):
+        for canonical, pattern in groups.items():
+            if re.fullmatch(pattern, value, re.IGNORECASE):
+                return canonical
+        return None
+
+    def extract_claims(text):
+        """Produce lexical (number, unit, optional currency) claims with no overlaps."""
+        claims, occupied = [], []
+
+        def add_claim(match, claim):
+            left, right = match.span()
+            if any(left < r and right > l for l, r in occupied):
+                return
+            occupied.append((left, right))
+            claims.append(claim)
+
+        for m in date_rx.finditer(text):
+            add_claim(m, (m.group(1), "date", m.group(2).casefold(), m.group(3)))
+        for m in amount_rx.finditer(text):
+            scale = canonical_unit(m.group(2), scale_forms)
+            currency = canonical_unit(m.group(3), currency_forms) if m.group(3) else ""
+            add_claim(m, (m.group(1), scale, currency))
+        for m in plain_unit_rx.finditer(text):
+            unit = canonical_unit(m.group(2), {**currency_forms, **other_forms})
+            add_claim(m, (m.group(1), unit))
+        for m in bare_rx.finditer(text):
+            add_claim(m, (m.group(1), "bare"))
+        return claims
+
+    def check_passage(text, refs, location):
+        # Unlike the older, additional whole-document token guard above, this
+        # requires each claim to appear in evidence attached to cited fact IDs.
+        supported = set()
+        for fid in refs:
+            for evidence in facts[fid].get("evidence", []):
+                quote = evidence.get("quote")
+                if isinstance(quote, str):
+                    supported.update(extract_claims(quote))
+        for claim in extract_claims(text):
+            if claim not in supported:
+                raise UnsupportedNumber(
+                    f"Liczba {claim[0]} z jednostką '{' '.join(claim[1:]).replace('pp', 'p.p.')}' w {location} "
+                    f"nie ma zgodnego potwierdzenia w cytatach dowodowych "
+                    f"faktów {', '.join(refs)}. Zweryfikuj wartość, jednostkę i źródło."
+                )
+
+    check_passage(draft.get("title", ""), draft.get("title_facts", []), "tytule")
+    check_passage(draft.get("summary", ""), draft.get("summary_facts", []), "podsumowaniu")
+    for section in draft.get("sections", []):
+        check_passage(section.get("heading", ""), section.get("facts", []), "śródtytule")
+        for para in section.get("paragraphs", []):
+            check_passage(para.get("text", ""), para.get("facts", []), "akapicie")
+    # --- End unit-aware validation ---
     sources = {e["source"] for f in used for e in facts[f]["evidence"]}
     if (not dossier or dossier.get("source_mode", "independent") == "independent") and len({d["group"] for d in docs if d["id"] in sources}) < 2:
         raise Rejected("Tekst nie wykorzystuje dwóch wydawców.")
