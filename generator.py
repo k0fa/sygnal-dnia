@@ -11,6 +11,7 @@ from newsroom import (APIError, Rejected, Reader, Gemini, SELECT, EXTRACT, WRITE
                       collect, check_dossier, check_draft, render_markdown, source_group,
                       prepare_article, review_result, diagnostic_text, article_policy)
 
+from topic_priority import rank_topics
 
 def report(status, message, **extra):
     save_json(DATA / "run_report.json", dict(status=status, message=message,
@@ -48,7 +49,7 @@ def select_topics(ai, queue, records, diagnostics=None):
         audit.append("Uzasadnienie Gemini: " + diagnostic_text(reason if isinstance(reason, str)
                      and reason.strip() else "Model nie podał uzasadnienia.", 1200))
     selected, seen_groups = [], set()
-    # Validate all returned groups, then retain up to three valid groups.
+    # Validate all returned groups, then retain up to six valid groups.
     for index, topic in enumerate(topics[:20], 1):
         prefix = f"Grupa {index}: "
         if not isinstance(topic, dict):
@@ -82,8 +83,14 @@ def select_topics(ai, queue, records, diagnostics=None):
         seen_groups.add(signature)
         selected.append(items)
         audit.append(prefix + "przyjęta; " + ", ".join(publishers))
-        if len(selected) == 3:
+        if len(selected) == 6:
             break
+    # Heurystyka RSS porządkuje tematy, ale ich nie odrzuca i nie weryfikuje.
+    selected = rank_topics(selected, source_group)
+    if selected:
+        audit.append("Kolejność po heurystyce RSS (nie jest weryfikacją faktów): " +
+                     " | ".join(diagnostic_text(items[0].get("title", ""), 90)
+                                for items in selected))
     for entry in audit:
         logging.info("Wybór tematów: %s", entry)
     return selected

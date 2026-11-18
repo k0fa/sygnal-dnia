@@ -45,6 +45,10 @@ class APIError(RuntimeError):
     """API/configuration failure; must be visible in Actions."""
 
 
+class DraftAttribution(Rejected):
+    """Draft needs to identify the documented origin of the information."""
+
+
 def words(text):
     return re.findall(r"\w+", str(text).casefold())
 
@@ -491,10 +495,10 @@ Korzystaj wyłącznie z przekazanych materiałów. Nie wymyślaj faktów ani adr
 Zachowuj daty, liczby, niepewność, atrybucję zarzutów i domniemanie niewinności.
 Nie kopiuj zdań 1:1. Odpowiadaj wyłącznie poprawnym obiektem JSON."""
 
-SELECT = """Wybierz maksymalnie 3 konkretne aktualne wydarzenia z listy RSS.
+SELECT = """Wybierz maksymalnie 6 konkretnych aktualnych wydarzeń z listy RSS.
 Grupuj materiały o TYM SAMYM wydarzeniu, a nie szerokiej kategorii.
 Szukaj wspólnego zdarzenia, osób/instytucji i czasu, także przy różnych nagłówkach.
-Każda grupa: 1–5 różnych identyfikatorów id. Preferuj dwa publisher_group.
+Każda grupa: 1–5 różnych identyfikatorów id. Preferuj co najmniej dwa publisher_group.
 Pojedynczy artykuł też może być kandydatem: po pobraniu tekstu musi przejść
 kontrolę pochodzenia attributed, dowodów i wystarczającej ilości materiału.
 Różne serwisy Interii/GeekWeek to jeden wydawca. Nie powtarzaj tematów z recent.
@@ -525,7 +529,7 @@ source_mode wybierz zgodnie z ZASADAMI POCHODZENIA. Nie pomijaj tego pola.
 Dla source_mode=attributed obowiązkowe origin według schematu poniżej,
 independent=false; dla independent wymagane independent=true i origin=null.
 facts: [{"id":"F1","claim":"fakt z zastrzeżeniami",
-"evidence":[{"source":"S1","quote":"dokładny fragment"}]}].
+"evidence":[{"source":"S1","passage_id":"P1"}]}].
 uncertainties: lista informacji, których źródła nie rozstrzygają.
 Przy sprzecznych kluczowych danych ready=false. Oceniaj rzeczywistą treść."""
 
@@ -533,7 +537,8 @@ WRITE = """Napisz oryginalny, obiektywny artykuł po polsku z dossier.
 Ściśle zastosuj length_policy przekazane w danych: min_words–max_words
 słów w akapitach i min_sections–max_sections sekcji. To ograniczenia kodu.
 Tytuł, summary i śródtytuły nie wliczają się do liczby słów. Celuj w środek
-podanego zakresu, nie w dolną granicę. Dla zakresu 160–300 celuj w 220–240 słów.
+podanego zakresu, nie w dolną granicę. Dla zakresu 160–300 zaplanuj dwie sekcje
+po dwa akapity po 45–65 słów, o ile dossier wystarcza na taki tekst.
 Dopasuj szczegółowość do faktów. Bez powtórzeń, lania wody i wiedzy z pamięci.
 Jeśli fakty nie wystarczają na dolny limit, publish=false; nie dopełniaj tekstu.
 Konkretny tytuł: kto, co zrobił; bez clickbaitu i przesądzania zarzutów.
@@ -542,6 +547,12 @@ Na końcu omów istotne niewiadome, bez prognoz niemających podstaw.
 Każdy akapit, tytuł, podsumowanie i śródtytuł musi wskazywać id faktów,
 uzasadniających WSZYSTKIE twierdzenia. Zwykły tekst, bez HTML, Markdown,
 linków, dosłownych cytatów i znaczników.
+LICZBY: Wszystkie wartości liczbowe, w tym godziny, muszą występować w dowodach
+faktów przypisanych do fragmentu. Pomijaj zbędne liczby bez takiego dowodu.
+Zachowaj zapis wartości zgodny ze źródłem (separator dziesiętny, grupowanie tysięcy).
+Nie wykonuj własnych obliczeń, przeliczeń ani zaokrągleń.
+Nie dodawaj wartości niepotwierdzonych w materiałach źródłowych.
+Jeśli istotnej liczby nie można potwierdzić, zwróć publish=false.
 Zwróć {"publish":true,"title":"...","title_facts":["F1"],
 "summary":"...","summary_facts":["F1"],
 "sections":[{"heading":"...","facts":["F1"],"paragraphs":[
@@ -557,14 +568,20 @@ Nie zakładaj poprawności dossier. Przy wątpliwościach approved=false.
 Zwróć {"approved":true,"issues":[]} albo approved=false i listę powodów."""
 
 
-EXTRACT += "\nZASADY POCHODZENIA:\nZawsze zwróć source_mode: \"independent\" albo \"attributed\".\nindependent: dwie rzeczywiście niezależne relacje, independent=true.\nattributed: jedno rozpoznane badanie, depesza agencji lub komunikat, opisane przez\nportale; independent=false. To NIE jest powód odrzucenia sam w sobie.\nready=true tylko jeśli pochodzenie jest ustalone i informacje wystarczają.\nNie traktuj różnych portali jako niezależnych potwierdzeń przedrukowanej depeszy.\nDla attributed dodaj origin:\n{\"kind\":\"poll|dispatch|statement\",\n\"name\":{\"value\":\"dokładna nazwa pracowni/agencji/autora komunikatu ze źródła\",\n\"evidence\":[{\"source\":\"S1\",\"quote\":\"dokładny fragment potwierdzający nazwę\"}]}}\nNie zgaduj agencji lub autora. Nazwa portalu nie zastępuje nieznanej agencji.\nDla komunikatu firmy użyj nazwy firmy w formie faktycznie występującej w text,\nnp. Microsoft, a nie dopisanej z pamięci pełnej nazwy spółki. Cytat musi\nwiązać tę nazwę z autorstwem komunikatu, nie tylko wspominać firmę.\nNie deklaruj independent=true na podstawie samej liczby domen. Jeśli niezależność\nnie jest potwierdzona, wybierz attributed tylko z udokumentowanym origin;\nw przeciwnym razie ready=false. Nie zmieniaj tego warunku dla uzyskania publikacji.\nDowód musi mieć 30–500 znaków, istnieć w text i zawierać dokładne value.\nDla kind=poll name to pracownia badawcza. Dodaj origin.poll z kluczami\ncommissioner, fieldwork, sample, method. Każde pole ma {\"value\":\"dokładny fragment\",\n\"evidence\":[{\"source\":\"S1\",\"quote\":\"dowód\"}]} albo null, gdy brak danych.\nNie uzupełniaj braków metodologii z wiedzy własnej. Nie traktuj jednego badania\nopisanego przez dwa portale jako dwóch badań. Uwzględnij pochodzenie również\nw udokumentowanych facts. Zapisuj fakty jako \"według X...\" albo \"w badaniu X...\".\nNie przedstawiaj zarzutów ani deklaracji strony jako ustalonej prawdy.\n"
+EXTRACT += "\nZASADY POCHODZENIA:\nZawsze zwróć source_mode: \"independent\" albo \"attributed\".\nindependent: dwie rzeczywiście niezależne relacje, independent=true.\nattributed: jedno rozpoznane badanie, depesza agencji lub komunikat, opisane przez\nportale; independent=false. To NIE jest powód odrzucenia sam w sobie.\nready=true tylko jeśli pochodzenie jest ustalone i informacje wystarczają.\nNie traktuj różnych portali jako niezależnych potwierdzeń przedrukowanej depeszy.\nDla attributed dodaj origin:\n{\"kind\":\"poll|dispatch|statement\",\n\"name\":{\"value\":\"dokładna nazwa pracowni/agencji/autora komunikatu ze źródła\",\n\"evidence\":[{\"source\":\"S1\",\"passage_id\":\"P1\"}]}}\nNie zgaduj agencji lub autora. Nazwa portalu nie zastępuje nieznanej agencji.\nDla komunikatu firmy użyj nazwy firmy w formie faktycznie występującej w text,\nnp. Microsoft, a nie dopisanej z pamięci pełnej nazwy spółki. Cytat musi\nwiązać tę nazwę z autorstwem komunikatu, nie tylko wspominać firmę.\nNie deklaruj independent=true na podstawie samej liczby domen. Jeśli niezależność\nnie jest potwierdzona, wybierz attributed tylko z udokumentowanym origin;\nw przeciwnym razie ready=false. Nie zmieniaj tego warunku dla uzyskania publikacji.\nWskazany fragment musi zawierać dokładne value.\nDla kind=poll name to pracownia badawcza. Dodaj origin.poll z kluczami\ncommissioner, fieldwork, sample, method. Każde pole ma {\"value\":\"dokładny fragment\",\n\"evidence\":[{\"source\":\"S1\",\"passage_id\":\"P1\"}]} albo null, gdy brak danych.\nKażde pole poll z wartością inną niż null musi mieć evidence z passage_id.\nNie uzupełniaj braków metodologii z wiedzy własnej. Nie traktuj jednego badania\nopisanego przez dwa portale jako dwóch badań. Uwzględnij pochodzenie również\nw udokumentowanych facts. Zapisuj fakty jako \"według X...\" albo \"w badaniu X...\".\nNie przedstawiaj zarzutów ani deklaracji strony jako ustalonej prawdy.\n"
 
-WRITE += """\nW trybie attributed nazwij origin.name.value dokładnie w podsumowaniu i pierwszym\nakapicie. Dla poll tytuł zawiera słowo Sondaż, dla innych podaj autora lub Według.\nWyraźnie przypisuj twierdzenia źródłu. Nie sugeruj niezależnego potwierdzenia.\nSondaż opisuje jedno badanie; nie prognozuj wyniku wyborów. Nie wymyślaj metodologii.\n"""
+WRITE += """\nW trybie attributed nazwij origin.name.value dokładnie w podsumowaniu i pierwszym\nakapicie. Dla poll tytuł zawiera słowo Sondaż.\nW pozostałych przypadkach zacznij tytuł od „Według {origin.name.value}: ”,\nwstawiając dokładną nazwę z dossier.\nWyraźnie przypisuj twierdzenia źródłu. Nie sugeruj niezależnego potwierdzenia.\nSondaż opisuje jedno badanie; nie prognozuj wyniku wyborów. Nie wymyślaj metodologii.\n"""
 VERIFY += """\nW trybie attributed nie wymagaj dwóch niezależnych relacji: sprawdź zamiast tego\nprawdziwe pochodzenie, dowody nazwy autora, atrybucję każdej istotnej tezy i notę\nprovenance_note. Sama zgodność przedruków nie dowodzi prawdziwości wydarzenia.\nSprawdź, że wspólna depesza nie została nazwana niezależnym potwierdzeniem,\na sondaż nie został przedstawiony jako pewny wynik wyborów. Sprawdź metodologię\nlub jawne oznaczenie jej braków. Nie zmieniaj rygoru tematów wysokiego ryzyka.\n"""
 
-EXTRACT += "\nOCENA RYZYKA I ROLI DOKUMENTÓW:\nZawsze zwróć risk_reason (konkretne uzasadnienie) i risk_categories (lista).\nKategorie: criminal_allegation, casualties, medical, financial_advice,\nactive_conflict, public_safety, unconfirmed_personal_allegation.\nhigh_risk=true dokładnie wtedy, gdy lista nie jest pusta. Sama polityka, zmiana\nstanowiska, sondaż albo opis wyników finansowych NIE oznacza wysokiego ryzyka.\nOceniaj rzeczywiste twierdzenia: niepewne zarzuty wobec osoby, oskarżenia karne,\nofiary, działania wojenne, porady zdrowotne/inwestycyjne i zagrożenia wymagają\nrozszerzonej weryfikacji. Nie zmniejszaj ryzyka, by umożliwić publikację.\nDla high_risk=true podaj risk_fact_ids (wszystkie fakty o takim ryzyku) oraz\nprimary_evidence: [{\"source\":\"S1\",\"kind\":\"original_interview\",\n\"is_original\":true,\"author\":\"dokładna nazwa autora/instytucji\",\n\"authorship_quote\":\"dokładny fragment 30–500 znaków z text, zawierający autora\",\n\"why_primary\":\"dlaczego TA publikacja jest oryginalnym materiałem dla tych faktów\",\n\"supports_facts\":[\"F1\"]}].\nDozwolone kind: official_document, original_statement, original_research,\noriginal_dataset, firsthand_report, original_interview.\nŹródło pierwotne to rola KONKRETNEGO pobranego dokumentu, nie domena.\nCytat urzędnika w wtórnym artykule NIE zmienia artykułu w źródło pierwotne.\nTak samo domena urzędowa nie gwarantuje aktualności ani adekwatności.\nOryginalny wywiad lub własny reportaż mogą być pierwotne, jeśli tekst wyraźnie\npotwierdza autorstwo i bezpośredni charakter relacji. Sam podpis autora nie wystarcza.\nNie zakładaj, że dokument istnieje, tylko dlatego że inna strona go przywołuje.\nŹródła muszą występować w documents. Dowody faktów ryzyka muszą wskazywać na\nte same dokumenty i rzeczywiście wspierać te fakty.\nKomunikat zainteresowanej strony dowodzi jej oświadczenia, a nie automatycznie\nprawdziwości opisanych zdarzeń; zachowaj atrybucję w claim.\nGdy nie znaleziono pierwotnych dowodów, nie wymyślaj ich: primary_evidence=[].\n"
+EXTRACT += "\nOCENA RYZYKA I ROLI DOKUMENTÓW:\nZawsze zwróć risk_reason (konkretne uzasadnienie) i risk_categories (lista).\nKategorie: criminal_allegation, casualties, medical, financial_advice,\nactive_conflict, public_safety, unconfirmed_personal_allegation.\nhigh_risk=true dokładnie wtedy, gdy lista nie jest pusta. Sama polityka, zmiana\nstanowiska, sondaż albo opis wyników finansowych NIE oznacza wysokiego ryzyka.\nOceniaj rzeczywiste twierdzenia: niepewne zarzuty wobec osoby, oskarżenia karne,\nofiary, działania wojenne, porady zdrowotne/inwestycyjne i zagrożenia wymagają\nrozszerzonej weryfikacji. Nie zmniejszaj ryzyka, by umożliwić publikację.\nDla high_risk=true podaj risk_fact_ids (wszystkie fakty o takim ryzyku) oraz\nprimary_evidence: [{\"source\":\"S1\",\"kind\":\"original_interview\",\n\"is_original\":true,\"author\":\"dokładna nazwa autora/instytucji\",\n\"authorship_quote\":\"dokładny fragment 30–500 znaków z text, zawierający autora\",\n\"why_primary\":\"dlaczego TA publikacja jest oryginalnym materiałem dla tych faktów\",\n\"supports_facts\":[\"F1\"]}].\nDozwolone kind: official_document, original_statement, original_research,\noriginal_dataset, firsthand_report, original_interview.\nŹródło pierwotne to rola KONKRETNEGO pobranego dokumentu, nie domena.\nCytat urzędnika w wtórnym artykule NIE zmienia artykułu w źródło pierwotne.\nTak samo domena urzędowa nie gwarantuje aktualności ani adekwatności.\nOryginalny wywiad lub własny reportaż mogą być pierwotne, jeśli tekst wyraźnie\npotwierdza autorstwo i bezpośredni charakter relacji. Sam podpis autora nie wystarcza.\nNie zakładaj, że dokument istnieje, tylko dlatego że inna strona go przywołuje.\nŹródła muszą występować w documents. Dowody faktów ryzyka muszą wskazywać na\nte same dokumenty i rzeczywiście wspierać te fakty.\nKomunikat zainteresowanej strony dowodzi jej oświadczenia, a nie automatycznie\nprawdziwości opisanych zdarzeń; zachowaj atrybucję w claim.\nGdy nie znaleziono pierwotnych dowodów, nie wymyślaj ich: primary_evidence=[].\nNIE pomijaj pola authorship_quote — MUSI zawierać dokładny fragment z text\nźródła, który potwierdza autorstwo. Brak authorship_quote = ready=false.\nGdy nie znaleziono pierwotnych dowodów dla faktów wysokiego ryzyka, ready=false.\n"
 
-SELECT += """\nWybieraj do trzech tematów możliwych do rzetelnego opisania, nie tylko najbardziej\nsensacyjne nagłówki. Jeśli są dostępne, uwzględnij temat technologiczny, naukowy,\nkulturalny lub opis konkretnego badania/komunikatu z nazwanym autorem. Preferuj\njasne pochodzenie i dostępny materiał. Nie zgaduj dostępności źródeł z samego tytułu.\nPrzy wojnie i niepotwierdzonych zarzutach preferuj widoczne wskazanie dokumentu\npierwotnego. Nie obniżaj oceny ryzyka, by umożliwić publikację.\n"""
+SELECT += """\nWybieraj do sześciu tematów możliwych do rzetelnego opisania, nie tylko najbardziej
+sensacyjne nagłówki. Jeśli są dostępne, uwzględnij temat technologiczny, naukowy,
+kulturalny lub opis konkretnego badania/komunikatu z nazwanym autorem. Preferuj
+jasne pochodzenie i dostępny materiał. Nie zgaduj dostępności źródeł z samego tytułu.
+Przy wojnie i niepotwierdzonych zarzutach preferuj widoczne wskazanie dokumentu
+pierwotnego. Nie obniżaj oceny ryzyka, by umożliwić publikację.
+"""
 
 VERIFY += """\nSprawdź również high_risk, risk_reason i risk_categories. Jeśli dossier ukryło\nryzyko lub błędnie zaniżyło jego ocenę, approved=false. Nie zmieniaj klasyfikacji\nw celu obejścia kontroli. Opis roli dokumentu nie jest dowodem sam w sobie.\n"""
 
@@ -620,6 +637,55 @@ Nie zaniżaj oceny ryzyka, nie wymyślaj tematów ani dostępności dokumentów.
 Brak grupy spełniającej warunki nadal oznacza pustą listę.
 W polu reason krótko uzasadnij kolejność i zaznacz, jeśli nie znaleziono
 żadnego odpowiedniego tematu o niższym ryzyku.
+"""
+
+# HERMES_PROMPT_QUALITY_20261116
+# Dodatkowe instrukcje dla modelu, bez oslabiania walidatorow.
+WRITE += """
+KONTROLA ORYGINALNOŚCI PRZED ZWROTEM JSON:
+- Nie przepisuj z artykułów źródłowych ani z cytatów w dossier żadnej
+  sekwencji 12 kolejnych słów. Dotyczy to tytułu, podsumowania,
+  śródtytułów i każdego akapitu. Sprawdź to przed odpowiedzią.
+- Szczególnie uważaj na wyliczenia finansowe i urzędowe formuły:
+  liczby, jednostki, nazwy i znaczenie pozostaw zgodne z dowodami,
+  lecz budowę zdań i kolejność wyrazów opracuj samodzielnie.
+- Nie rozwiązuj problemu kopiowania przez dodawanie nowych informacji,
+  zmianę kwot lub pomijanie istotnych zastrzeżeń. Gdy nie można napisać
+  wiernego faktom tekstu własnymi słowami, zwróć publish=false.
+- Wymagane referencje facts zachowaj dla KAŻDEGO elementu artykułu.
+
+KONTROLA DAT I DOWODÓW PRZED ZWROTEM JSON:
+- Każda konkretna data (dzień, miesiąc, rok, termin lub przedział dat)
+  w title, summary, heading i paragraph.text musi być wyraźnie potwierdzona
+  przez evidence faktów wymienionych w title_facts, summary_facts,
+  section.facts albo paragraph.facts właściwego fragmentu.
+- Nie przenoś daty publikacji źródła na datę wydarzenia. Nie dopisuj roku,
+  miesiąca ani dnia, których nie potwierdza powiązany dowód.
+- Jeśli data jest niepotwierdzona, usuń ją tylko gdy nie zmieni to znaczenia;
+  jeśli jest niezbędna do rzetelnego opisania wydarzenia, zwróć publish=false.
+
+OSTATECZNA KONTROLA CAŁEGO TEKSTU PRZED ZWROTEM JSON:
+- Ponownie sprawdź WSZYSTKIE liczby, jednostki, kwoty, waluty, procenty,
+  punkty procentowe, daty i identyfikatory faktów, także po każdej korekcie.
+  Każdy z tych elementów musi odpowiadać cytatom evidence właściwych faktów.
+- Sprawdź, czy żadna część artykułu nie zawiera 12 kolejnych słów
+  dosłownie przepisanych ze źródeł. Parafrazuj składnię, nie fakty.
+- Nie naprawiaj jednego błędu kosztem nowej liczby, daty, tezy lub braku
+  atrybucji. Jeśli nie da się zachować zgodności z dowodami, publish=false.
+"""
+EXTRACT += """
+KONTROLA POWIĄZAŃ DOWODÓW PIERWOTNYCH PRZED ZWROTEM JSON:
+- risk_fact_ids to identyfikatory istniejących faktów wysokiego ryzyka.
+- W każdym primary_evidence[].supports_facts wskazuj tylko fakty
+  znajdujące się w risk_fact_ids, bez wymyślonych identyfikatorów.
+- Dla każdego F wskazanego w supports_facts jego evidence musi
+  wskazywać TEN SAM source co primary_evidence[].source, a fragment
+  musi rzeczywiście wspierać konkretną tezę dotyczącą ryzyka.
+- is_original=true tylko przy udokumentowanej pierwotności dokumentu.
+  Nie nazywaj przedruku z cytatem urzędnika źródłem pierwotnym.
+- Jeśli nie da się przypisać wszystkich ryzykownych faktów do
+  adekwatnych oryginalnych dokumentów, zwróć ready=false zamiast
+  wymyślać powiązania albo zaniżać high_risk.
 """
 
 class Gemini:
@@ -710,8 +776,12 @@ def check_origin(dossier, docs):
         for ev in evidence:
             if not isinstance(ev, dict) or ev.get("source") not in source_map:
                 raise Rejected("Nieznane źródło dowodu pochodzenia.")
+            # Sprawdź obecność quote PRZED wywołaniem evidence_quote
+            quote_val = ev.get("quote")
+            if not isinstance(quote_val, str) or not quote_val.strip():
+                raise CorrectableDossier("Brak dowodu pochodzenia: " + label + " — quote jest wymagany.")
             context = f'Pochodzenie ({label}), źródło {ev["source"]}'
-            quote = evidence_quote(ev.get("quote"), source_map[ev["source"]]["text"], context)
+            quote = evidence_quote(quote_val, source_map[ev["source"]]["text"], context)
             if normalized(value).casefold() not in normalized(quote).casefold():
                 raise Rejected("Niepotwierdzone dane pochodzenia. " + context + ": nazwa/wartość " + diagnostic_text(repr(value), 180) +
                                " nie występuje w cytowanym fragmencie. Użyj zapisu ze źródła.")
@@ -738,16 +808,16 @@ def check_attribution(draft, dossier):
     name = normalized(origin["name"]["value"]).casefold()
     lead = draft["sections"][0]["paragraphs"][0]["text"]
     if any(name not in normalized(text).casefold() for text in (draft["summary"], lead)):
-        raise Rejected("Brak nazwy pierwotnego źródła w podsumowaniu lub pierwszym akapicie. "
+        raise DraftAttribution("Brak nazwy pierwotnego źródła w podsumowaniu lub pierwszym akapicie. "
                        "Oczekiwana nazwa: " + diagnostic_text(origin["name"]["value"], 140) +
                        " | Podsumowanie: " + diagnostic_text(draft["summary"], 220) +
                        " | Pierwszy akapit: " + diagnostic_text(lead, 300))
     title = normalized(draft["title"]).casefold()
     if origin["kind"] == "poll":
         if "sondaż" not in title:
-            raise Rejected("Tytuł musi oznaczać wynik jako sondaż.")
+            raise DraftAttribution("Tytuł musi oznaczać wynik jako sondaż.")
     elif "według" not in title and name not in title:
-        raise Rejected("Tytuł relacji musi wskazywać pochodzenie informacji.")
+        raise DraftAttribution("Tytuł relacji musi wskazywać pochodzenie informacji.")
 
 
 def origin_note(dossier):
@@ -982,6 +1052,116 @@ def check_draft(draft, facts, docs, dossier=None):
         raise UnsupportedNumber("Liczby bez zgodnego zapisu w źródłach: " +
                                 ", ".join(sorted(unmatched)) +
                                 ". Zweryfikuj wartość, jednostkę i sposób zapisu.")
+
+    # Editorial numeric guard: numbers must occur in evidence quoted for the
+    # same fact IDs, with matching complete units. This is lexical validation,
+    # not a substitute for checking who or what a number describes.
+    month_names = ("stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
+                   "lipca", "sierpnia", "września", "października", "listopada", "grudnia")
+    number_token = r"\d+(?:[.,]\d+)?"
+    scale_forms = {
+        "tys": r"tys\.?|tysiąc|tysiąca|tysiące|tysięcy",
+        "mln": r"mln|milion|miliona|miliony|milionów",
+        "mld": r"mld|miliard|miliarda|miliardy|miliardów",
+    }
+    currency_forms = {
+        "zł": r"zł|pln|złoty|złote|złotych",
+        "eur": r"eur|euro",
+        "usd": r"usd|dolar|dolara|dolary|dolarów",
+    }
+    other_forms = {
+        "pp": r"p\.p\.|punkty\s+procentowe|punktów\s+procentowych|punktu\s+procentowego",
+        "%": r"%|procent|procenta|procenty|procentów",
+        "kg": r"kg|kilogram|kilograma|kilogramy|kilogramów",
+        "km": r"km|kilometr|kilometra|kilometry|kilometrów",
+        "t": r"t|tona|tonę|tony|ton|tonę|toną",
+        "rok": r"rok|roku|lata|lat|r\.",
+    }
+
+    def alternatives(forms):
+        # Prefer longer spellings to shorter prefixes (e.g. 'milionów' over 'milion').
+        return "(?:" + "|".join(sorted(forms.values(), key=len, reverse=True)) + ")"
+
+    date_rx = re.compile(
+        rf"(?<![\w.,])([1-9]|[12]\d|3[01])\s+({'|'.join(month_names)})(?!\w)"
+        r"(?:\s+((?:19|20)\d{2})(?!\w)(?:\s+(?:r\.|roku\b))?)?",
+        re.IGNORECASE,
+    )
+    time_rx = re.compile(r"(?<![\w:])(?:[01]?\d|2[0-3]):[0-5]\d(?![\w:])")
+    # Require the entire unit; 't' must never match the first letter of 'turystów'.
+    amount_rx = re.compile(
+        rf"(?<!\w)({number_token})\s+({alternatives(scale_forms)})"
+        rf"(?:\s+({alternatives(currency_forms)}))?(?!\w)",
+        re.IGNORECASE,
+    )
+    plain_unit_rx = re.compile(
+        rf"(?<!\w)({number_token})\s*({alternatives({**currency_forms, **other_forms})})(?!\w)",
+        re.IGNORECASE,
+    )
+    bare_rx = re.compile(rf"(?<!\w)({number_token})(?!\w)")
+
+    def canonical_unit(value, groups):
+        for canonical, pattern in groups.items():
+            if re.fullmatch(pattern, value, re.IGNORECASE):
+                return canonical
+        return None
+
+    def extract_claims(text, *, evidence=False):
+        """Produce lexical (number, unit, optional currency) claims with no overlaps."""
+        claims, occupied = [], []
+
+        def add_claim(match, claim):
+            left, right = match.span()
+            if any(left < r and right > l for l, r in occupied):
+                return
+            occupied.append((left, right))
+            claims.append(claim)
+
+        for m in date_rx.finditer(text):
+            date = (m.group(1), "data", m.group(2).casefold())
+            if m.group(3):
+                add_claim(m, (*date, m.group(3)))
+                if evidence:
+                    claims.append(date)
+            else:
+                add_claim(m, date)
+        for m in time_rx.finditer(text):
+            add_claim(m, (m.group(0), "godzina"))
+        for m in amount_rx.finditer(text):
+            scale = canonical_unit(m.group(2), scale_forms)
+            currency = canonical_unit(m.group(3), currency_forms) if m.group(3) else ""
+            add_claim(m, (m.group(1), scale, currency))
+        for m in plain_unit_rx.finditer(text):
+            unit = canonical_unit(m.group(2), {**currency_forms, **other_forms})
+            add_claim(m, (m.group(1), unit))
+        for m in bare_rx.finditer(text):
+            add_claim(m, (m.group(1), "bare"))
+        return claims
+
+    def check_passage(text, refs, location):
+        # Unlike the older, additional whole-document token guard above, this
+        # requires each claim to appear in evidence attached to cited fact IDs.
+        supported = set()
+        for fid in refs:
+            for evidence in facts[fid].get("evidence", []):
+                quote = evidence.get("quote")
+                if isinstance(quote, str):
+                    supported.update(extract_claims(quote, evidence=True))
+        for claim in extract_claims(text):
+            if claim not in supported:
+                raise UnsupportedNumber(
+                    f"Liczba {claim[0]} z jednostką '{' '.join(claim[1:]).replace('pp', 'p.p.')}' w {location} "
+                    f"nie ma zgodnego potwierdzenia w cytatach dowodowych "
+                    f"faktów {', '.join(refs)}. Zweryfikuj wartość, jednostkę i źródło."
+                )
+
+    check_passage(draft.get("title", ""), draft.get("title_facts", []), "tytule")
+    check_passage(draft.get("summary", ""), draft.get("summary_facts", []), "podsumowaniu")
+    for section in draft.get("sections", []):
+        check_passage(section.get("heading", ""), section.get("facts", []), "śródtytule")
+        for para in section.get("paragraphs", []):
+            check_passage(para.get("text", ""), para.get("facts", []), "akapicie")
+    # --- End unit-aware validation ---
     sources = {e["source"] for f in used for e in facts[f]["evidence"]}
     if (not dossier or dossier.get("source_mode", "independent") == "independent") and len({d["group"] for d in docs if d["id"] in sources}) < 2:
         raise Rejected("Tekst nie wykorzystuje dwóch wydawców.")
@@ -1043,10 +1223,16 @@ def resolve_fact_passages(dossier, docs):
     facts = dossier.get("facts", [])
     if not isinstance(facts, list):
         return
-    for fact in facts:
-        if not isinstance(fact, dict) or not isinstance(fact.get("evidence"), list):
+    fields = list(facts)
+    origin = dossier.get("origin")
+    if isinstance(origin, dict):
+        fields.append(origin.get("name"))
+        if isinstance(origin.get("poll"), dict):
+            fields.extend(origin["poll"].values())
+    for field in fields:
+        if not isinstance(field, dict) or not isinstance(field.get("evidence"), list):
             continue
-        for ev in fact["evidence"]:
+        for ev in field["evidence"]:
             if not isinstance(ev, dict) or "passage_id" not in ev:
                 continue
             sid, pid = ev.get("source"), ev["passage_id"]
@@ -1061,14 +1247,17 @@ def resolve_fact_passages(dossier, docs):
 
 
 PASSAGE_INSTRUCTIONS = """
-DOWODY FAKTÓW — obowiązuje ten format zamiast przepisywania quote:
+DOWODY FAKTÓW I POCHODZENIA — obowiązuje ten format zamiast przepisywania quote:
 Każdy dokument ma passages: słownik identyfikatorów i dosłownych fragmentów.
 Dla facts[].evidence zwracaj {"source":"S1","passage_id":"P1"}.
 Wybieraj WYŁĄCZNIE istniejący identyfikator w danym dokumencie.
 Fragment musi bezpośrednio uzasadniać claim, łącznie z liczbami i zastrzeżeniami.
 Możesz wskazać kilka fragmentów. Nie zwracaj quote w dowodach faktów —
 program pobierze jego treść. Nie zmieniaj znaczenia źródła.
-Dla origin oraz primary_evidence zachowaj dotychczasowy format i dokładne cytaty.
+Dla origin.name.evidence i origin.poll.*.evidence użyj tego samego formatu
+z passage_id. Fragment musi zawierać dokładną wartość i potwierdzać jej rolę.
+Dla primary_evidence zachowaj authorship_quote z dokładnym cytatem zawierającym
+nazwę autora. Bez potwierdzenia autorstwa zwróć ready=false.
 Numer fragmentu potwierdza jego istnienie, NIE prawdziwość ani pierwotność źródła.
 """
 
@@ -1103,38 +1292,75 @@ jako ciągły fragment text wskazanego source, zachowując zapis, liczby i inter
 Nie poprawiaj ani nie parafrazuj tekstu cytatu. Jeśli nie ma dowodu dla tezy,
 usuń tę tezę; nie dopisuj dowodów. Jeśli pozostanie mniej niż 6 faktów, ready=false.
 risk_reason musi zawierać konkretne uzasadnienie także przy high_risk=false.
+Dobierz ponownie passage_id dla dowodów faktów, nazwy autora i danych sondażu.
+NIE pomijaj authorship_quote w primary_evidence — MUSI zawierać fragment z autorem.
 Nie obniżaj ryzyka ani nie deklaruj niezależności, aby ominąć kontrolę.
 Oceń ponownie treść, a nie tylko zgodność formatu. ready=false jest poprawną
 odpowiedzią, jeśli materiał nie wystarcza. Brakujące dane pozostaw niepotwierdzone.
 """
 
 
+def add_origin_attribution(draft, dossier):
+    # The origin was checked in the dossier. Run all draft checks and reviews
+    # on the resulting text, including the added attribution.
+    if draft.get("publish") is not True or dossier.get("source_mode") != "attributed":
+        return
+    name = dossier["origin"]["name"]["value"]
+    normalized_name = normalized(name).casefold()
+    try:
+        lead = draft["sections"][0]["paragraphs"][0]
+    except (KeyError, IndexError, TypeError):
+        return  # The draft validator reports a malformed response.
+    if not isinstance(lead, dict):
+        return
+    for piece, field in ((draft, "summary"), (lead, "text")):
+        value = piece.get(field)
+        if isinstance(value, str) and value.strip() and normalized_name not in normalized(value).casefold():
+            piece[field] = f"Źródłem informacji jest {name}. {value}"
+
+
 def checked_draft(ai, dossier, facts, docs, policy, entry):
     draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
+    add_origin_attribution(draft, dossier)
     try:
         length, used = check_draft(draft, facts, docs, dossier)
-    except (CopiedPassage, UnsupportedNumber, DraftLength) as exc:
+    except (CopiedPassage, UnsupportedNumber, DraftLength, DraftAttribution) as exc:
         # One rewrite, then normal review(s); never spend their reserved budget.
         required = 3 if dossier["high_risk"] else 2
         if 5 - ai.calls < required:
             raise
         entry["rewrite"] = diagnostic_text(exc)
         logging.info(entry["rewrite"])
+        previous_body_words = sum(
+            len(words(paragraph["text"]))
+            for section in draft["sections"] for paragraph in section["paragraphs"]
+        )
         draft = ai.ask(WRITE + "\nKOREKTA: usuń błąd podany w validation_error. "
-                       "Jeśli błąd dotyczy długości tekstu, popraw liczbę słów samych akapitów. "
+                       "previous_body_words to zmierzona długość poprzednich akapitów. "
+                       "Niezależnie od rodzaju błędu przelicz treść nowych akapitów po korekcie. "
                        "Tytuł, summary i śródtytuły nie są wliczane. Celuj w środek zakresu length_policy. "
                        "Zbyt krótki tekst rozwiń o pominięte udokumentowane fakty z dossier, "
                        "bez powtórzeń, ozdobników ani dopisywania informacji. Zbyt długi skróć. "
                        "Jeśli materiał nie wystarcza, zwróć publish=false. "
-                       "Jeśli błąd dotyczy liczby, sprawdź jej wartość i jednostkę w documents. "
+                       "Jeśli błąd dotyczy liczby, sprawdź jej wartość i jednostkę "
+                       "w dowodach faktów z dossier przypisanych do danego fragmentu. "
                        "Użyj zapisu ze źródła. Usuń niepopartą tezę; nie zastępuj liczby dowolną "
                        "inną występującą w źródle. Nie wykonuj nowych obliczeń. "
                        "Jeśli błąd dotyczy kopiowania, napisz tekst własnymi słowami, "
                        "zmieniając budowę zdań. Zachowaj fakty, liczby, nazwy, atrybucję "
                        "i powiązania z faktami. Nie używaj synonimów zmieniających znaczenie "
-                       "ani nie dodawaj informacji. Zwróć cały artykuł w wymaganym JSON.",
+                       "ani nie dodawaj informacji. Po naprawieniu validation_error przeprowadź "
+                       "PONOWNĄ KONTROLĘ CAŁEGO artykułu: title, summary, wszystkie heading "
+                       "i paragraph.text. Sprawdź wszystkie daty, liczby, kwoty, waluty, "
+                       "jednostki i odwołania do fact_id względem evidence właściwych "
+                       "faktów, nawet gdy pierwotny błąd dotyczył tylko kopiowania tekstu. "
+                       "Nie dodawaj niepotwierdzonej daty, nie kopiuj 12 kolejnych słów "
+                       "ze źródeł. Jeśli weryfikacja nie jest możliwa, zwróć publish=false. "
+                       "Zwróć cały artykuł w wymaganym JSON.",
                        dict(dossier=dossier, documents=docs, previous_article=draft,
+                            previous_body_words=previous_body_words,
                             validation_error=str(exc), length_policy=policy), tokens=12288)
+        add_origin_attribution(draft, dossier)
         length, used = check_draft(draft, facts, docs, dossier)
     return draft, length, used
 

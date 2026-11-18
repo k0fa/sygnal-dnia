@@ -737,6 +737,7 @@ class SourceRelevanceRegressionTests(unittest.TestCase):
 
 
 
+@unittest.skipUnless(DEPS, "Integration requires requirements.txt")
 class TopicSelectionRegressionTests(unittest.TestCase):
     def candidates(self):
         return [dict(id="hash1", title="Konkretny temat numer jeden",
@@ -816,6 +817,20 @@ class OriginEvidenceRegressionTests(unittest.TestCase):
                            evidence=[dict(source="S1", quote=quote)])))
         return dossier, docs
 
+    def attributed(self, kind="poll"):
+        """Helper from ProvenanceTests."""
+        docs, dossier, draft = fixture()
+        quote = "Badanie wykonała Pracownia Alfa na zlecenie Portalu Beta w ostatnim tygodniu."
+        docs[0]["text"] += " " + quote
+        dossier.update(source_mode="attributed", independent=False,
+                       origin=dict(kind=kind, name=dict(value="Pracownia Alfa",
+                           evidence=[dict(source="S1", quote=quote)])))
+        if kind == "poll":
+            dossier["origin"]["poll"] = dict(
+                commissioner=dict(value="Portal", evidence=[dict(source="S1", quote=quote)]),
+                fieldwork=None, sample=None, method=None)
+        return docs, dossier
+
     def test_short_exact_statement_evidence_has_context(self):
         dossier, docs = self.origin("Microsoft wydał komunikat")
         origin = n.check_origin(dossier, docs)
@@ -848,6 +863,26 @@ class OriginEvidenceRegressionTests(unittest.TestCase):
         with self.assertRaisesRegex(n.Rejected, "brak source_mode"):
             n.check_origin(dict(independent=False), [])
 
+    def test_missing_quote_in_origin_name_evidence_correctable(self):
+        """Brak quote w origin.name.evidence -> CorrectableDossier (można skorygować)."""
+        docs, dossier = self.attributed("dispatch")
+        dossier["origin"]["name"]["evidence"][0].pop("quote", None)
+        with self.assertRaisesRegex(n.CorrectableDossier, "Brak dowodu pochodzenia.*quote jest wymagany"):
+            n.check_origin(dossier, docs)
+
+    def test_null_quote_in_origin_name_evidence_correctable(self):
+        """quote=null w origin.name.evidence -> CorrectableDossier."""
+        docs, dossier = self.attributed("dispatch")
+        dossier["origin"]["name"]["evidence"][0]["quote"] = None
+        with self.assertRaisesRegex(n.CorrectableDossier, "Brak dowodu pochodzenia.*quote jest wymagany"):
+            n.check_origin(dossier, docs)
+
+    def test_missing_quote_in_origin_poll_evidence_correctable(self):
+        """Brak quote w origin.poll.*.evidence -> CorrectableDossier."""
+        docs, dossier = self.attributed("poll")
+        dossier["origin"]["poll"]["commissioner"]["evidence"][0].pop("quote", None)
+        with self.assertRaisesRegex(n.CorrectableDossier, "Brak dowodu pochodzenia.*quote jest wymagany"):
+            n.check_origin(dossier, docs)
 
 
 class DossierCorrectionTests(unittest.TestCase):
@@ -924,6 +959,86 @@ class DossierCorrectionTests(unittest.TestCase):
         self.assertEqual([{k: v for k, v in d.items() if k != "passages"} for d in data["documents"]], docs)
         self.assertIn("Brak uzasadnienia", data["validation_error"])
 
+    def test_missing_quote_origin_corrected_with_full_review(self):
+        """Brak quote w origin -> korekta dossier + pełny review (5 wywołań)."""
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["source_mode"] = "attributed"
+        bad["independent"] = False
+        bad["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1")]))  # brak quote
+        # Poprawiony dossier z quote
+        good_origin = copy.deepcopy(good)
+        good_origin["source_mode"] = "attributed"
+        good_origin["independent"] = False
+        good_origin["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1", quote="Pracownia Alfa potwierdza.")]))
+        # docs[0] musi zawierać quote
+        docs[0]["text"] += " Pracownia Alfa potwierdza."
+        # Draft musi mieć atrybucję w summary i pierwszym akapicie
+        draft = copy.deepcopy(draft)
+        draft["title"] = "Pracownia Alfa: " + draft["title"]
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        ai, entries, _ = self.run_article([bad, good_origin, draft, dict(approved=True, issues=[])], docs)
+        self.assertEqual(ai.calls, 5)
+        self.assertIn("Brak dowodu pochodzenia", entries[0]["correction"])
+        self.assertEqual(entries[0]["status"], "ZATWIERDZONO")
+
+    def test_missing_quote_origin_correction_blocked_by_budget(self):
+        """Brak quote w origin high-risk -> brak budżetu na korektę + extra review -> Rejected."""
+        docs, bad, _ = fixture()
+        bad.update(high_risk=True, risk_categories=["active_conflict"], risk_reason="Test.")
+        bad["source_mode"] = "attributed"
+        bad["independent"] = False
+        bad["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1")]))  # brak quote
+        ai = RetryTests().client([bad])  # tylko 1 odpowiedź (błędna)
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "Brak dowodu pochodzenia"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 2)  # SELECT + EXTRACT (błędny), bez korekty
+
+    def test_missing_real_evidence_never_publishes(self):
+        """Fałszywy quote w origin -> korekta nie pomaga, brak prawdziwego dowodu -> Rejected."""
+        docs, good, draft = fixture()
+        bad = copy.deepcopy(good)
+        bad["source_mode"] = "attributed"
+        bad["independent"] = False
+        bad["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1", quote="Wymyślony cytat.")]))
+        # Draft z atrybucją (choć fałszywa)
+        draft = copy.deepcopy(draft)
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        # Korekta też z fałszywym quote
+        bad2 = copy.deepcopy(bad)
+        bad2["origin"]["name"]["evidence"][0]["quote"] = "Inny wymyślony cytat."
+        ai = RetryTests().client([bad, bad2])
+        with patch.object(n, "collect", return_value=docs):
+            with self.assertRaisesRegex(n.Rejected, "nie istnieje"):
+                n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 3)  # SELECT + EXTRACT + korekta
+
+    def test_valid_origin_evidence_passes(self):
+        """Poprawny quote w origin przechodzi walidację."""
+        docs, good, draft = fixture()
+        good["source_mode"] = "attributed"
+        good["independent"] = False
+        quote = "Pracownia Alfa wydała komunikat o wyniku badań."
+        docs[0]["text"] += " " + quote
+        good["origin"] = dict(kind="statement", name=dict(
+            value="Pracownia Alfa", evidence=[dict(source="S1", quote=quote)]))
+        # Draft musi mieć atrybucję
+        draft = copy.deepcopy(draft)
+        draft["title"] = "Pracownia Alfa: " + draft["title"]
+        draft["summary"] = "Według Pracownia Alfa " + draft["summary"]
+        draft["sections"][0]["paragraphs"][0]["text"] = "Według Pracownia Alfa " + draft["sections"][0]["paragraphs"][0]["text"]
+        ai = RetryTests().client([good, draft, dict(approved=True, issues=[])])
+        with patch.object(n, "collect", return_value=docs):
+            result = n.prepare_article(ai, None, [[dict(title="Test")]], [])
+        self.assertEqual(ai.calls, 4)
+        self.assertEqual(result[0][0]["title"], "Test")
 
 
 class JsonResponseTests(unittest.TestCase):
@@ -989,6 +1104,27 @@ class JsonResponseTests(unittest.TestCase):
             client.ask("prompt", {})
         self.assertEqual(client.calls, 1)
 
+    def test_fifth_call_blocks_further_requests(self):
+        """Po 5 wywołaniach API dalsze żądania są blokowane."""
+        client = n.Gemini("test")
+        client.calls = 5
+        client.opener.open = MagicMock()
+        with self.assertRaises(n.APIError):
+            client.ask("prompt", {})
+        client.opener.open.assert_not_called()
+
+    def test_fourth_call_allows_one_more(self):
+        """4. wywołanie pozwala na 5., 5. blokuje kolejne."""
+        client = n.Gemini("test")
+        client.calls = 4
+        client.opener.open = MagicMock(return_value=self.response('{"ready":true}', "STOP"))
+        with patch.object(n.time, "sleep"):
+            result = client.ask("prompt", {})
+        self.assertEqual(client.calls, 5)
+        self.assertEqual(result, {"ready": True})
+        # 6. wywołanie blokowane
+        with self.assertRaises(n.APIError):
+            client.ask("prompt", {})
 
 
 class RewriteTests(unittest.TestCase):
@@ -1075,6 +1211,265 @@ class NumberCorrectionTests(unittest.TestCase):
                 n.checked_draft(ai, dossier, {}, docs, {}, {})
         self.assertEqual(ai.calls, 3)
 
+    def test_decimal_separator_mismatch_rejected(self):
+        """1,5 w tekście vs 1.5 w źródle -> UnsupportedNumber (różny zapis)."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wartość wynosi 1,5 mln."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wartość wynosi 1.5 mln."
+        facts = n.check_dossier(dossier, docs)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "1.5"):
+            n.check_draft(draft, facts, docs)
+
+    def test_thousand_separator_space_not_matched(self):
+        """1 000 w tekście vs 1000 w źródle -> UnsupportedNumber (spacja nie w regex)."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Populacja to 1 000 osób."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Populacja to 1000 osób."
+        facts = n.check_dossier(dossier, docs)
+        # "1 000" daje "1" i "000"; "1000" to "1000" -> "000" i "1000" niezgodne
+        with self.assertRaisesRegex(n.UnsupportedNumber, "000"):
+            n.check_draft(draft, facts, docs)
+
+    def test_leading_zeros_not_normalized(self):
+        """001.5 w tekście vs 1.5 w źródle -> UnsupportedNumber (leading zeros nie usuwane)."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wynik 1.5."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wynik 001.5."
+        facts = n.check_dossier(dossier, docs)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "001.5"):
+            n.check_draft(draft, facts, docs)
+
+    def test_truly_unconfirmed_number_rejected(self):
+        """Liczba nieistniejąca w źródle -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        draft["sections"][0]["paragraphs"][0]["text"] += " Nowa wartość 99999."
+        facts = n.check_dossier(dossier, docs)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "99999"):
+            n.check_draft(draft, facts, docs)
+
+    def test_different_value_rejected(self):
+        """1.5 vs 15 to różne wartości -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wartość 1.5."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wartość 15000."
+        facts = n.check_dossier(dossier, docs)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "15000"):
+            n.check_draft(draft, facts, docs)
+
+    def test_missing_decimal_part_rejected(self):
+        """1,5 vs 1 to różne wartości -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wartość 1,5."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wartość 10000."
+        facts = n.check_dossier(dossier, docs)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "10000"):
+            n.check_draft(draft, facts, docs)
+
+    # --- Unit-aware validation tests ---
+
+    def _update_quotes(self, docs, facts):
+        """Aktualizuje cytaty w evidence, aby odpowiadały obecnemu tekstu dokumentów.
+        Obsługuje oba formaty: listę faktów pod kluczem 'facts' lub słownik {fact_id: fact}.
+        """
+        fact_list = facts.get("facts", [])
+        if not fact_list and isinstance(facts, dict):
+            # Słownik {fact_id: fact} zwracany przez check_dossier
+            fact_list = list(facts.values())
+        for fact in fact_list:
+            for ev in fact.get("evidence", []):
+                src_id = ev.get("source")
+                for doc in docs:
+                    if doc["id"] == src_id:
+                        ev["quote"] = doc["text"]
+                        break
+
+    def test_magnitude_mismatch_mln_vs_tys_rejected(self):
+        """1,5 mln vs 1,5 tys. -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Budżet to 1,5 mln zł."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Budżet to 1,5 tys. zł."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "1,5.*mln|1,5.*tys"):
+            n.check_draft(draft, facts, docs)
+
+    def test_percent_vs_percentage_points_rejected(self):
+        """10% vs 10 p.p. -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wzrost o 10%."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wzrost o 10 p.p."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "10.*%|10.*p.p"):
+            n.check_draft(draft, facts, docs)
+
+    def test_currency_mismatch_mln_vs_mld_rejected(self):
+        """50 mln zł vs 50 mld zł -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Kwota 50 mln zł."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Kwota 50 mld zł."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "50.*mln|50.*mld"):
+            n.check_draft(draft, facts, docs)
+
+    def test_year_mismatch_rejected(self):
+        """2025 vs 2026 -> UnsupportedNumber."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Rok 2025."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Rok 2026."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "2025|2026"):
+            n.check_draft(draft, facts, docs)
+
+    def test_correct_unit_passes(self):
+        """Poprawna liczba z jednostką przechodzi."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Budżet to 1,5 mln zł."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Budżet to 1,5 mln zł."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertGreater(length, 0)
+
+    def test_year_in_text_passes(self):
+        """Rok w tekście zgodny z źródłem przechodzi."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " W 2026 roku."
+        docs[1]["text"] += " W 2026 roku."
+        draft["sections"][0]["paragraphs"][0]["text"] += " W 2026 roku."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertGreater(length, 0)
+
+    def test_number_without_unit_still_validated(self):
+        """Liczba bez jednostki wciąż musi istnieć w źródle (stara reguła)."""
+        docs, dossier, draft = fixture()
+        draft["sections"][0]["paragraphs"][0]["text"] += " Nowa wartość 99999."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "99999"):
+            n.check_draft(draft, facts, docs)
+
+    def test_currency_mismatch_mln_zl_vs_mln_usd_rejected(self):
+        """50 mln zł vs 50 mln USD -> REJECT (waluta inna)."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Kwota 50 mln zł."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Kwota 50 mln USD."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "50.*mln.*usd|50.*mln.*zł"):
+            n.check_draft(draft, facts, docs)
+
+    def test_correct_percent_passes(self):
+        """Poprawne 10% -> PASS."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wzrost o 10%."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wzrost o 10%."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertGreater(length, 0)
+
+    def test_correct_percentage_points_passes(self):
+        """Poprawne 10 p.p. -> PASS."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wzrost o 10 p.p."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wzrost o 10 p.p."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertGreater(length, 0)
+
+    def test_correct_mln_passes(self):
+        """Poprawne 1,5 mln -> PASS."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wartość 1,5 mln."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wartość 1,5 mln."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertGreater(length, 0)
+
+    def test_number_from_different_source_paragraph_rejected(self):
+        """Liczba z innego akapitu źródła -> REJECT (nie można przesuwać liczb między cytatami)."""
+        docs, dossier, draft = fixture()
+        # doc[0] ma "10% w akapicie 1", doc[1] ma "20% w akapicie 2"
+        docs[0]["text"] += " Pierwszy wskaźnik 10%."
+        docs[1]["text"] += " Drugi wskaźnik 20%."
+        # Artykuł próbuje użyć 20% z dowodu F1 (który pochodzi z doc[0])
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wskaźnik wynosi 20%."
+        draft["sections"][0]["paragraphs"][0]["facts"] = ["F1"]
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        with self.assertRaisesRegex(n.UnsupportedNumber, "20"):
+            n.check_draft(draft, facts, docs)
+
+    def test_number_from_different_fact_id_rejected(self):
+        """Liczba z dowodu innego fact_id -> REJECT."""
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Wskaźnik A: 10%."
+        docs[1]["text"] += " Wskaźnik B: 20%."
+        # Artykuł w akapicie z faktem F1 próbuje użyć 20% (który jest w dowodzie F2)
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wartość 20%."
+        # Ogranicz akapit tylko do faktu F1
+        draft["sections"][0]["paragraphs"][0]["facts"] = ["F1"]
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        # Paragraph ma facts=["F1"] ale próbuje użyć 20% z dowodu F2
+        with self.assertRaisesRegex(n.UnsupportedNumber, "20"):
+            n.check_draft(draft, facts, docs)
+
+    def test_number_and_unit_in_separate_quote_fragments_rejected(self):
+        """Liczba i jednostka w oddzielnych fragmentach cytatu -> REJECT."""
+        docs, dossier, draft = fixture()
+        # Dodajemy do istniejących tekstów (nie nadpisujemy, by zachować długość)
+        docs[0]["text"] += " Wartość wynosi 10. Jednostka to procent. Wartość 10%."
+        docs[1]["text"] += " Inny dokument o wskaźniku. Wartość 10%."
+        # Tworzymy nowy dossier z poprawnymi quotes (pasującymi do nowego tekstu)
+        q1 = "Wartość wynosi 10. Jednostka to procent."  # 40 znaków
+        q2 = "Inny dokument o wskaźniku. Wartość 10%."  # 35 znaków
+        facts_list = [dict(id=f"F{i+1}", claim=f"Fakt testowy numer {i+1}",
+                           evidence=[dict(source=docs[i % 2]["id"],
+                                          quote=q1 if i % 2 == 0 else q2)])
+                      for i in range(16)]
+        # check_dossier oczekuje facts jako LISTA
+        dossier = dict(ready=True, independent=True, high_risk=False, official_relevant=False,
+                       facts=facts_list, risk_reason="Opis neutralnego wydarzenia w materiale testowym.",
+                       risk_categories=[])
+        # Dossier z poprawnym quote (zawiera "10%")
+        n.check_dossier(dossier, docs)
+        self._update_quotes(docs, {"facts": facts_list})
+        # Artykuł próbuje użyć "10%" jako wyrażenie
+        # Ogranicz akapit TYLKO do faktu F1 (który ma problematyczny quote)
+        draft["sections"][0]["paragraphs"][0]["facts"] = ["F1"]
+        draft["sections"][0]["paragraphs"][0]["text"] += " Wartość 10%."
+        # Nadpisujemy quote na taki, który NIE zawiera "10%" jako ciągłe wyrażenie
+        for fact in facts_list:
+            for ev in fact.get("evidence", []):
+                if ev["source"] == "S1":
+                    ev["quote"] = "Wartość wynosi 10. Jednostka to procent."
+        with self.assertRaisesRegex(n.UnsupportedNumber, "10"):
+            n.check_draft(draft, {f["id"]: f for f in facts_list}, docs)
+
+    def test_same_amount_different_entity_limitation(self):
+        """Ta sama kwota przypisana innej firmie -> wykryj ograniczenie walidacji kontekstu.
+        Walidator sprawdza liczbę+jednostkę, nie przypisanie encji.
+        """
+        docs, dossier, draft = fixture()
+        docs[0]["text"] += " Firma X zarobiła 100 mln zł."
+        docs[1]["text"] += " Firma Y zarobiła 100 mln zł."
+        draft["sections"][0]["paragraphs"][0]["text"] += " Firma X zarobiła 100 mln zł."
+        facts = n.check_dossier(dossier, docs)
+        self._update_quotes(docs, facts)
+        # Walidator sprawdza czy "100 mln zł" jest w dowodach - JEST (w obu cytatach)
+        # Nie wykrywa, że w artykule przypisano to Firmie X a w dowodach jest Firma Y
+        # To jest znane ograniczenie - walidator nie robi pełnej analizy semantycznej
+        length, sources = n.check_draft(draft, facts, docs)
+        self.assertGreater(length, 0)
+        # Test dokumentuje ograniczenie: walidator nie weryfikuje kontekstu przypisania
 
 
 class LengthCorrectionTests(unittest.TestCase):
@@ -1147,6 +1542,20 @@ class PassageTests(unittest.TestCase):
         d = {"facts":[{"evidence":[{"source":"S1","passage_id":"P1"}]}]}
         n.resolve_fact_passages(d,self.docs)
         self.assertIn(d["facts"][0]["evidence"][0]["quote"], self.docs[0]["text"])
+
+    def test_resolves_origin_name_and_poll_fields(self):
+        text = "Pracownia Przykład opublikowała sondaż, w którym uczestniczyło 600 osób."
+        name = {"value": "Pracownia Przykład", "evidence": [{"source": "S1", "passage_id": "P1"}]}
+        sample = {"value": "600 osób", "evidence": [{"source": "S1", "passage_id": "P1"}]}
+        dossier = {"source_mode": "attributed", "independent": False, "origin": {
+            "kind": "poll", "name": name,
+            "poll": {"sample": sample, "commissioner": None, "fieldwork": None, "method": None},
+        }}
+        docs = [{"id": "S1", "text": text}]
+        n.resolve_fact_passages(dossier, docs)
+        self.assertEqual(n.check_origin(dossier, docs), dossier["origin"])
+        self.assertEqual(name["evidence"][0]["quote"], text)
+        self.assertEqual(sample["evidence"][0]["quote"], text)
     def test_unknown_source_or_passage(self):
         for sid,pid in [("S2","P1"),("S1","P999"),("S1",[])]:
             with self.subTest(sid=sid,pid=pid), self.assertRaises(n.CorrectableDossier):
@@ -1159,3 +1568,23 @@ class PassageTests(unittest.TestCase):
         before=copy.deepcopy(d)
         n.resolve_fact_passages(d,self.docs)
         self.assertEqual(d,before)
+
+    def test_valid_passage_id_without_quote_passes(self):
+        """Poprawny passage_id bez quote w facts -> passage zostaje rozwiązany."""
+        d = {"facts": [{"evidence": [{"source": "S1", "passage_id": "P1"}]}]}
+        n.resolve_fact_passages(d, self.docs)
+        self.assertIn("quote", d["facts"][0]["evidence"][0])
+        self.assertIsInstance(d["facts"][0]["evidence"][0]["quote"], str)
+        self.assertGreater(len(d["facts"][0]["evidence"][0]["quote"]), 0)
+
+    def test_nonexistent_passage_id_rejected(self):
+        """Nieistniejący passage_id -> CorrectableDossier."""
+        d = {"facts": [{"evidence": [{"source": "S1", "passage_id": "P999"}]}]}
+        with self.assertRaises(n.CorrectableDossier):
+            n.resolve_fact_passages(d, self.docs)
+
+    def test_unknown_source_in_passage_id_rejected(self):
+        """Nieznane źródło w passage_id -> CorrectableDossier."""
+        d = {"facts": [{"evidence": [{"source": "S999", "passage_id": "P1"}]}]}
+        with self.assertRaises(n.CorrectableDossier):
+            n.resolve_fact_passages(d, self.docs)
