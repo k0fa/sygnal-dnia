@@ -537,7 +537,8 @@ WRITE = """Napisz oryginalny, obiektywny artykuł po polsku z dossier.
 Ściśle zastosuj length_policy przekazane w danych: min_words–max_words
 słów w akapitach i min_sections–max_sections sekcji. To ograniczenia kodu.
 Tytuł, summary i śródtytuły nie wliczają się do liczby słów. Celuj w środek
-podanego zakresu, nie w dolną granicę. Dla zakresu 160–300 celuj w 220–240 słów.
+podanego zakresu, nie w dolną granicę. Dla zakresu 160–300 zaplanuj dwie sekcje
+po dwa akapity po 45–65 słów, o ile dossier wystarcza na taki tekst.
 Dopasuj szczegółowość do faktów. Bez powtórzeń, lania wody i wiedzy z pamięci.
 Jeśli fakty nie wystarczają na dolny limit, publish=false; nie dopełniaj tekstu.
 Konkretny tytuł: kto, co zrobił; bez clickbaitu i przesądzania zarzutów.
@@ -546,7 +547,8 @@ Na końcu omów istotne niewiadome, bez prognoz niemających podstaw.
 Każdy akapit, tytuł, podsumowanie i śródtytuł musi wskazywać id faktów,
 uzasadniających WSZYSTKIE twierdzenia. Zwykły tekst, bez HTML, Markdown,
 linków, dosłownych cytatów i znaczników.
-LICZBY: Wszystkie wartości liczbowe muszą wynikać z udokumentowanych faktów.
+LICZBY: Wszystkie wartości liczbowe, w tym godziny, muszą występować w dowodach
+faktów przypisanych do fragmentu. Pomijaj zbędne liczby bez takiego dowodu.
 Zachowaj zapis wartości zgodny ze źródłem (separator dziesiętny, grupowanie tysięcy).
 Nie wykonuj własnych obliczeń, przeliczeń ani zaokrągleń.
 Nie dodawaj wartości niepotwierdzonych w materiałach źródłowych.
@@ -1309,13 +1311,19 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
             raise
         entry["rewrite"] = diagnostic_text(exc)
         logging.info(entry["rewrite"])
+        previous_body_words = sum(
+            len(words(paragraph["text"]))
+            for section in draft["sections"] for paragraph in section["paragraphs"]
+        )
         draft = ai.ask(WRITE + "\nKOREKTA: usuń błąd podany w validation_error. "
-                       "Jeśli błąd dotyczy długości tekstu, popraw liczbę słów samych akapitów. "
+                       "previous_body_words to zmierzona długość poprzednich akapitów. "
+                       "Niezależnie od rodzaju błędu przelicz treść nowych akapitów po korekcie. "
                        "Tytuł, summary i śródtytuły nie są wliczane. Celuj w środek zakresu length_policy. "
                        "Zbyt krótki tekst rozwiń o pominięte udokumentowane fakty z dossier, "
                        "bez powtórzeń, ozdobników ani dopisywania informacji. Zbyt długi skróć. "
                        "Jeśli materiał nie wystarcza, zwróć publish=false. "
-                       "Jeśli błąd dotyczy liczby, sprawdź jej wartość i jednostkę w documents. "
+                       "Jeśli błąd dotyczy liczby, sprawdź jej wartość i jednostkę "
+                       "w dowodach faktów z dossier przypisanych do danego fragmentu. "
                        "Użyj zapisu ze źródła. Usuń niepopartą tezę; nie zastępuj liczby dowolną "
                        "inną występującą w źródle. Nie wykonuj nowych obliczeń. "
                        "Jeśli błąd dotyczy kopiowania, napisz tekst własnymi słowami, "
@@ -1330,6 +1338,7 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
                        "ze źródeł. Jeśli weryfikacja nie jest możliwa, zwróć publish=false. "
                        "Zwróć cały artykuł w wymaganym JSON.",
                        dict(dossier=dossier, documents=docs, previous_article=draft,
+                            previous_body_words=previous_body_words,
                             validation_error=str(exc), length_policy=policy), tokens=12288)
         length, used = check_draft(draft, facts, docs, dossier)
     return draft, length, used

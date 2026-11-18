@@ -73,6 +73,10 @@ class WritePromptSafeguardsTests(unittest.TestCase):
             self.assertIn(phrase, prompt)
         self.assertIn("Powielony fragment", ai.datas[1]["validation_error"])
         self.assertEqual(ai.datas[1]["documents"], docs)
+        self.assertEqual(ai.datas[1]["previous_body_words"], sum(
+            len(n.words(paragraph["text"]))
+            for section in draft["sections"] for paragraph in section["paragraphs"]
+        ))
 
     def test_budget_still_prevents_unreviewed_rewrite(self):
         docs, dossier, draft = fixture()
