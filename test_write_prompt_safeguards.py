@@ -98,6 +98,23 @@ class WritePromptSafeguardsTests(unittest.TestCase):
         self.assertEqual(ai.calls, 2)
         self.assertEqual(ai.datas[1]["validation_error"], "Brak atrybucji")
 
+    def test_documented_origin_is_added_before_draft_validation(self):
+        docs, dossier, draft = fixture()
+        name = "Pracownia Alfa"
+        dossier.update(source_mode="attributed", origin={"name": {"value": name}})
+        original_summary = f"{name} przedstawiła ustalenia na konferencji prasowej."
+        draft["summary"] = original_summary
+        lead = draft["sections"][0]["paragraphs"][0]
+        original_lead = lead["text"]
+
+        def validate(article, *args):
+            self.assertEqual(article["summary"], original_summary)
+            self.assertEqual(lead["text"], f"Źródłem informacji jest {name}. {original_lead}")
+            return 200, {"S1"}
+
+        with patch.object(n, "check_draft", side_effect=validate):
+            n.checked_draft(CaptureAI([draft]), dossier, {}, docs, {}, {})
+
 
 if __name__ == "__main__":
     unittest.main()

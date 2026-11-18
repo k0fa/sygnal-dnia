@@ -1300,8 +1300,28 @@ odpowiedzią, jeśli materiał nie wystarcza. Brakujące dane pozostaw niepotwie
 """
 
 
+def add_origin_attribution(draft, dossier):
+    # The origin was checked in the dossier. Run all draft checks and reviews
+    # on the resulting text, including the added attribution.
+    if draft.get("publish") is not True or dossier.get("source_mode") != "attributed":
+        return
+    name = dossier["origin"]["name"]["value"]
+    normalized_name = normalized(name).casefold()
+    try:
+        lead = draft["sections"][0]["paragraphs"][0]
+    except (KeyError, IndexError, TypeError):
+        return  # The draft validator reports a malformed response.
+    if not isinstance(lead, dict):
+        return
+    for piece, field in ((draft, "summary"), (lead, "text")):
+        value = piece.get(field)
+        if isinstance(value, str) and value.strip() and normalized_name not in normalized(value).casefold():
+            piece[field] = f"Źródłem informacji jest {name}. {value}"
+
+
 def checked_draft(ai, dossier, facts, docs, policy, entry):
     draft = ai.ask(WRITE, dict(dossier=dossier, length_policy=policy), tokens=12288)
+    add_origin_attribution(draft, dossier)
     try:
         length, used = check_draft(draft, facts, docs, dossier)
     except (CopiedPassage, UnsupportedNumber, DraftLength, DraftAttribution) as exc:
@@ -1340,6 +1360,7 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
                        dict(dossier=dossier, documents=docs, previous_article=draft,
                             previous_body_words=previous_body_words,
                             validation_error=str(exc), length_policy=policy), tokens=12288)
+        add_origin_attribution(draft, dossier)
         length, used = check_draft(draft, facts, docs, dossier)
     return draft, length, used
 
