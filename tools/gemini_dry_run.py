@@ -1,6 +1,6 @@
 """One-shot Gemini end-to-end smoke test. No article, history or site publishing.
 
-Designed for GitHub Actions on ai/test-gemini only. The RSS scraper may write
+The RSS scraper may write
 queue.json and history.json inside the ephemeral Actions checkout; no changes
 are committed or pushed.
 """
@@ -20,10 +20,6 @@ from scraper import DATA, duplicate, fetch, history
 
 
 def main():
-    if os.environ.get("GITHUB_REF") != "refs/heads/ai/test-gemini":
-        print("STOP: test jest dozwolony tylko na galezi ai/test-gemini.")
-        return 2
-
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         print("STOP: GEMINI_API_KEY nie jest dostepny dla tej pracy GitHub Actions.")

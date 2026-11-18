@@ -84,6 +84,16 @@ class WritePromptSafeguardsTests(unittest.TestCase):
         self.assertEqual(ai.calls, 4)
         self.assertEqual(len(ai.prompts), 1)
 
+    def test_attribution_can_be_corrected_within_review_budget(self):
+        docs, dossier, draft = fixture()
+        ai = CaptureAI([draft, draft])
+        with patch.object(n, "check_draft", side_effect=[
+            n.DraftAttribution("Brak atrybucji"), (200, {"S1", "S2"})
+        ]):
+            n.checked_draft(ai, dossier, {}, docs, {}, {})
+        self.assertEqual(ai.calls, 2)
+        self.assertEqual(ai.datas[1]["validation_error"], "Brak atrybucji")
+
 
 if __name__ == "__main__":
     unittest.main()

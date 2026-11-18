@@ -1542,6 +1542,20 @@ class PassageTests(unittest.TestCase):
         d = {"facts":[{"evidence":[{"source":"S1","passage_id":"P1"}]}]}
         n.resolve_fact_passages(d,self.docs)
         self.assertIn(d["facts"][0]["evidence"][0]["quote"], self.docs[0]["text"])
+
+    def test_resolves_origin_name_and_poll_fields(self):
+        text = "Pracownia Przykład opublikowała sondaż, w którym uczestniczyło 600 osób."
+        name = {"value": "Pracownia Przykład", "evidence": [{"source": "S1", "passage_id": "P1"}]}
+        sample = {"value": "600 osób", "evidence": [{"source": "S1", "passage_id": "P1"}]}
+        dossier = {"source_mode": "attributed", "independent": False, "origin": {
+            "kind": "poll", "name": name,
+            "poll": {"sample": sample, "commissioner": None, "fieldwork": None, "method": None},
+        }}
+        docs = [{"id": "S1", "text": text}]
+        n.resolve_fact_passages(dossier, docs)
+        self.assertEqual(n.check_origin(dossier, docs), dossier["origin"])
+        self.assertEqual(name["evidence"][0]["quote"], text)
+        self.assertEqual(sample["evidence"][0]["quote"], text)
     def test_unknown_source_or_passage(self):
         for sid,pid in [("S2","P1"),("S1","P999"),("S1",[])]:
             with self.subTest(sid=sid,pid=pid), self.assertRaises(n.CorrectableDossier):

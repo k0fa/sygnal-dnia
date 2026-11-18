@@ -32,6 +32,27 @@ class NumericGuardRegressions(unittest.TestCase):
             "Spotkanie odbyło się 16 listopada 2026 r."
         )
 
+    def test_partial_date_matches_full_source_date(self):
+        self.check_case(
+            "Spotkanie odbyło się 18 listopada 2026 roku o 11:16.",
+            "Spotkanie odbyło się 18 listopada o 11:16."
+        )
+
+    def test_full_date_cannot_add_a_year(self):
+        with self.assertRaises(n.UnsupportedNumber):
+            self.check_case(
+                "Raport z 2026 roku zapowiada spotkanie 18 listopada.",
+                "Spotkanie odbędzie się 18 listopada 2026 roku."
+            )
+
+    def test_month_cannot_be_changed(self):
+        with self.assertRaises(n.UnsupportedNumber):
+            self.check_case("Spotkanie odbyło się 18 listopada.", "Spotkanie odbyło się 18 grudnia.")
+
+    def test_hour_and_minutes_cannot_be_reversed(self):
+        with self.assertRaises(n.UnsupportedNumber):
+            self.check_case("Spotkanie rozpoczęło się o 11:16.", "Spotkanie rozpoczęło się o 16:11.")
+
     def test_percent_cannot_replace_percentage_points(self):
         with self.assertRaises(n.UnsupportedNumber):
             self.check_case(
