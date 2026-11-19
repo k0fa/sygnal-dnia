@@ -11,6 +11,8 @@ from test_pipeline import fixture
 
 
 class CaptureAI:
+    call_limit = n.DEFAULT_CALL_LIMIT
+
     def __init__(self, responses):
         self.responses = iter(responses)
         self.prompts = []

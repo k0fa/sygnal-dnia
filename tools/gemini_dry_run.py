@@ -58,7 +58,7 @@ def main():
         print("Nie uruchomiono generator.run, build.py ani wdrozenia.")
         return 2
     finally:
-        print(f"Zuzyte wywolania Gemini: {ai.calls}/5")
+        print(f"Zuzyte wywolania Gemini: {ai.calls}/{ai.call_limit}")
 
 
 if __name__ == "__main__":
