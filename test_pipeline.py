@@ -223,12 +223,13 @@ class IntegrationTests(unittest.TestCase):
 
 
 class RetryTests(unittest.TestCase):
-    def client(self, responses):
+    def client(self, responses, limit=n.DEFAULT_CALL_LIMIT):
         class Fake:
             calls = 1  # Selection already consumed one request.
+            call_limit = limit
             model = "test"
             def ask(self, *args, **kwargs):
-                if self.calls >= 5:
+                if self.calls >= self.call_limit:
                     raise AssertionError("Exceeded budget")
                 self.calls += 1
                 result = responses.pop(0)
@@ -283,6 +284,41 @@ class RetryTests(unittest.TestCase):
             with self.assertRaisesRegex(n.Rejected, "Niepoparta teza"):
                 n.prepare_article(ai, None, [[dict(title="A")], [dict(title="B")]], [])
         self.assertEqual(ai.calls, 4)
+
+    def test_rejected_rewrite_leaves_budget_for_both_reviews_on_backup_topic(self):
+        docs, dossier, draft = fixture()
+        bad_draft = copy.deepcopy(draft)
+        bad_draft["sections"][0]["paragraphs"][0]["text"] += " Podano także 99999 zdarzeń."
+        high_docs, high_dossier = copy.deepcopy((docs, dossier))
+        high_docs[0]["official"] = True
+        high_dossier.update(high_risk=True, official_relevant=True, risk_categories=["public_safety"],
+                            risk_reason="Opis zagrożenia bezpieczeństwa publicznego.", risk_fact_ids=["F1"])
+        primary_fixture(high_docs, high_dossier)
+        ai = self.client([
+            dict(ready=False, reason="Niewystarczające dowody"),
+            dossier, bad_draft, copy.deepcopy(bad_draft),
+            high_dossier, draft, dict(approved=True, issues=[]), approved_primary_review(),
+        ], n.FALLBACK_CALL_LIMIT)
+        attempts = []
+        topics = [[dict(title=title)] for title in ("A", "B", "C")]
+        with patch.object(n, "collect", side_effect=[docs, docs, high_docs]):
+            result = n.prepare_article(ai, None, topics, attempts)
+        self.assertEqual(result[0][0]["title"], "C")
+        self.assertEqual([entry["status"] for entry in attempts], ["POMINIĘTO", "POMINIĘTO", "ZATWIERDZONO"])
+        self.assertIn("99999", attempts[1]["reason"])
+        self.assertEqual(ai.calls, n.FALLBACK_CALL_LIMIT)
+        self.assertEqual(ai.call_limit, n.FALLBACK_CALL_LIMIT)
+
+    def test_unusable_model_response_tries_next_topic(self):
+        docs, dossier, draft = fixture()
+        ai = self.client([n.CandidateResponseError("Niepoprawny JSON"),
+                          dossier, draft, dict(approved=True, issues=[])],
+                         n.FALLBACK_CALL_LIMIT)
+        attempts = []
+        with patch.object(n, "collect", return_value=docs):
+            result = n.prepare_article(ai, None, [[dict(title="A")], [dict(title="B")]], attempts)
+        self.assertEqual(result[0][0]["title"], "B")
+        self.assertIn("Niepoprawny JSON", attempts[0]["reason"])
 
     def test_api_failure_is_not_editorial_retry(self):
         docs, _, _ = fixture()
@@ -571,6 +607,7 @@ class ProvenanceTests(unittest.TestCase):
         docs, dossier, draft = self.attributed()
         class Fake:
             calls = 1
+            call_limit = n.DEFAULT_CALL_LIMIT
             def ask(self, prompt, data, **kwargs):
                 self.calls += 1
                 if self.calls == 2:

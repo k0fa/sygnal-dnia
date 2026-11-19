@@ -19,6 +19,9 @@ OFFICIAL_DOMAINS = ("gov.pl", "nbp.pl", "stat.gov.pl", "sejm.gov.pl", "europa.eu
 RESEARCH_DOMAINS = ("pap.pl", "cbos.pl", "ibris.pl", "pism.pl", "nasa.gov", "esa.int",
                     "gov.uk", "president.gov.ua", "bank.gov.ua")
 ALLOWED = NEWS_DOMAINS + OFFICIAL_DOMAINS + RESEARCH_DOMAINS
+DEFAULT_CALL_LIMIT = 5
+FALLBACK_CALL_LIMIT = 9
+MAX_TOPIC_CALLS = 4
 
 
 class Rejected(ValueError):
@@ -43,6 +46,10 @@ class DraftLength(Rejected):
 
 class APIError(RuntimeError):
     """API/configuration failure; must be visible in Actions."""
+
+
+class CandidateResponseError(APIError):
+    """A failed model response can rule out a candidate without stopping the cycle."""
 
 
 class DraftAttribution(Rejected):
@@ -693,11 +700,15 @@ class Gemini:
         self.key = key
         self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
         self.calls, self.last = 0, 0
+        configured_limit = os.getenv("GEMINI_MAX_CALLS", str(DEFAULT_CALL_LIMIT))
+        if configured_limit not in (str(DEFAULT_CALL_LIMIT), str(FALLBACK_CALL_LIMIT)):
+            raise APIError(f"GEMINI_MAX_CALLS musi mieć wartość {DEFAULT_CALL_LIMIT} albo {FALLBACK_CALL_LIMIT}.")
+        self.call_limit = int(configured_limit)
         self.opener = build_opener(NoRedirect())
 
     def ask(self, instruction, data, tokens=8192, _retry_json=True):
-        if self.calls >= 5:
-            raise APIError("Limit 5 żądań API w cyklu.")
+        if self.calls >= self.call_limit:
+            raise CandidateResponseError(f"Osiągnięto limit {self.call_limit} żądań API.")
         wait = 15 - (time.monotonic() - self.last)
         if wait > 0:
             time.sleep(wait)
@@ -711,7 +722,8 @@ class Gemini:
         endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" + quote(self.model, safe="") + ":generateContent"
         request = Request(endpoint, data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json", "x-goog-api-key": self.key})
-        logging.info("Gemini: model=%s, żądanie=%s/5", self.model, self.calls)
+        logging.info("Gemini: model=%s, żądanie=%s, bieżący limit=%s",
+                     self.model, self.calls, self.call_limit)
         try:
             with self.opener.open(request, timeout=120) as response:
                 raw = json.loads(response.read(300000))
@@ -726,16 +738,16 @@ class Gemini:
             raise APIError("Błąd połączenia lub odpowiedzi API.") from None
         candidates = raw.get("candidates") or []
         if not candidates or candidates[0].get("finishReason") != "STOP":
-            raise APIError("Odpowiedź zablokowana lub ucięta przez limit tokenów.")
+            raise CandidateResponseError("Odpowiedź zablokowana lub ucięta przez limit tokenów.")
         text = "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
                        if not p.get("thought"))
         try:
             return parse_model_json(text)
         except APIError as exc:
-            if not _retry_json or self.calls >= 5:
-                raise APIError(str(exc) + " Nie uzyskano poprawnej odpowiedzi; publikacja wstrzymana.") from None
-            logging.warning("%s Ponawiam odpowiedź tylko raz; wykorzystano %s/5 żądań.",
-                            exc, self.calls)
+            if not _retry_json or self.calls >= self.call_limit:
+                raise CandidateResponseError(str(exc) + " Nie uzyskano poprawnej odpowiedzi.") from None
+            logging.warning("%s Ponawiam odpowiedź tylko raz; wykorzystano %s/%s żądań.",
+                            exc, self.calls, self.call_limit)
             return self.ask(instruction + "\nFORMAT ODPOWIEDZI: zwróć wyłącznie jeden poprawny "
                             "obiekt JSON, bez Markdown i tekstu przed/po obiekcie. "
                             "Używaj podwójnych cudzysłowów dla kluczy i wartości tekstowych. "
@@ -1275,10 +1287,10 @@ def validated_dossier(ai, docs, entry):
             # Reserve draft + review, and extra review for any possible high risk.
             low_risk = dossier.get("high_risk") is False and dossier.get("risk_categories") == []
             required = 3 if low_risk else 4  # correction + draft + review(s)
-            if attempt or 5 - ai.calls < required:
+            if attempt or ai.call_limit - ai.calls < required:
                 raise
             entry["correction"] = diagnostic_text(exc)
-            logging.warning("Jedna korekta dossier w limicie 5 żądań: %s", entry["correction"])
+            logging.warning("Korekta dossier w ramach limitu tematu: %s", entry["correction"])
             dossier = ai.ask(EXTRACT + CORRECT_DOSSIER + PASSAGE_INSTRUCTIONS, dict(
                 documents=evidence_documents(docs), previous_dossier=dossier, validation_error=str(exc)))
     raise Rejected("Nie udało się poprawić dossier.")
@@ -1327,7 +1339,7 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
     except (CopiedPassage, UnsupportedNumber, DraftLength, DraftAttribution) as exc:
         # One rewrite, then normal review(s); never spend their reserved budget.
         required = 3 if dossier["high_risk"] else 2
-        if 5 - ai.calls < required:
+        if ai.call_limit - ai.calls < required:
             raise
         entry["rewrite"] = diagnostic_text(exc)
         logging.info(entry["rewrite"])
@@ -1367,6 +1379,7 @@ def checked_draft(ai, dossier, facts, docs, policy, entry):
 
 def prepare_article(ai, reader, topics, diagnostics):
     """Try another topic only if the remaining API budget permits review."""
+    cycle_limit = ai.call_limit
     for index, items in enumerate(topics, 1):
         label = diagnostic_text(items[0].get("title", "Temat"), 160)
         entry = dict(topic=index, title=label,
@@ -1374,9 +1387,11 @@ def prepare_article(ai, reader, topics, diagnostics):
                                    words="nieustalona liczba", publisher=item.get("source", ""))
                               for item in items], status="ROZPOCZĘTO")
         diagnostics.append(entry)
+        # Apply the topic limit to every call, including automatic JSON retries.
+        ai.call_limit = min(cycle_limit, ai.calls + MAX_TOPIC_CALLS)
         try:
             # Dossier + draft + mandatory review, even for low-risk articles.
-            if 5 - ai.calls < 3:
+            if ai.call_limit - ai.calls < 3:
                 raise Rejected("Pozostały limit API nie wystarcza na dossier, tekst i kontrolę.")
             entry["sources"] = []
             docs = collect(reader, items, diagnostics=entry["sources"])
@@ -1390,7 +1405,7 @@ def prepare_article(ai, reader, topics, diagnostics):
             entry["length_policy"] = policy
             logging.info("Format tekstu: %s", json.dumps(policy, ensure_ascii=False))
             required = 3 if dossier["high_risk"] else 2
-            if 5 - ai.calls < required:
+            if ai.call_limit - ai.calls < required:
                 raise Rejected("Za mało wywołań API na tekst i wszystkie wymagane kontrole "
                                "(w tym kontrolę wysokiego ryzyka).")
             draft, length, used = checked_draft(ai, dossier, facts, docs, policy, entry)
@@ -1410,11 +1425,13 @@ def prepare_article(ai, reader, topics, diagnostics):
                     verification, tokens=4096), dossier)
             entry.update(status="ZATWIERDZONO", reason="Kontrole zakończone.")
             return items, docs, dossier, facts, draft, length, used
-        except Rejected as exc:
+        except (Rejected, CandidateResponseError) as exc:
             entry.update(status="POMINIĘTO", reason=diagnostic_text(exc))
             logging.warning("Temat %s: %s — %s", index, label, entry["reason"])
-            if 5 - ai.calls < 3:
+            if cycle_limit - ai.calls < 3:
                 break
+        finally:
+            ai.call_limit = cycle_limit
     details = "\n".join(
         f'Temat {e["topic"]}: {e["title"]}\nPowód: {e.get("reason", e["status"])}\n'
         + ("Ocena ryzyka: " + diagnostic_text(e.get("risk", {}), 600) + "\n")
@@ -1422,5 +1439,5 @@ def prepare_article(ai, reader, topics, diagnostics):
         + "\n".join(f'Źródło: {s["url"]} | słowa: {s.get("words") if s.get("words") is not None else "brak odczytu"} | {s.get("method", "")} | {s.get("status", "")} | {s.get("reason", "")}' for s in e["sources"])
         for e in diagnostics)
     raise Rejected("Nie opublikowano artykułu. Wykorzystane wywołania API: "
-                   f"{ai.calls}/5.\n" + details)
+                   f"{ai.calls}/{cycle_limit}.\n" + details)
 

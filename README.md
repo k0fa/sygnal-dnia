@@ -6,7 +6,9 @@ Polski serwis informacyjny. Pobiera wiadomości z kanałów RSS, opracowuje wybr
 
 Workflow **Generate and publish news** na gałęzi `main` jest zaplanowany co trzy godziny. Można go też uruchomić ręcznie w GitHub Actions. Zmiana kodu na `main` uruchamia testy i wdraża stronę z istniejącymi artykułami. Generowanie nowego materiału odbywa się przy uruchomieniu ręcznym lub zaplanowanym.
 
-GitHub Actions używa sekretu `GEMINI_API_KEY` i opcjonalnej zmiennej repozytorium `GEMINI_MODEL`. Wybór modelu i limity zależą od konfiguracji projektu Gemini. Jeden cykl wykorzystuje najwyżej pięć żądań i zapisuje najwyżej jeden artykuł. Workflow **Gemini - jednorazowy test bez publikacji** można uruchomić ręcznie z tymi samymi ustawieniami. Sprawdza cały proces na aktualnych źródłach bez zapisu artykułu w repozytorium i bez wdrożenia.
+GitHub Actions używa sekretu `GEMINI_API_KEY` i opcjonalnej zmiennej repozytorium `GEMINI_MODEL`. Cykl kończy się po zaakceptowaniu jednego artykułu. Jeśli redakcja odrzuci pierwszy temat, generator próbuje opracować kolejny temat z listy w tym samym cyklu. Każdy temat przechodzi pełną kontrolę.
+
+W GitHub Actions domyślny limit to 9 żądań Gemini na cykl, w tym najwyżej 4 na pojedynczy temat. Zmienna repozytorium `GEMINI_MAX_CALLS=5` przywraca niższy limit. Lokalnie domyślnie obowiązuje 5 żądań. Limity konta Google mogą być niższe. Workflow **Gemini - jednorazowy test bez publikacji** sprawdza ten sam proces na aktualnych źródłach bez zapisu artykułu w repozytorium i bez wdrożenia.
 
 ## Zasady redakcyjne
 
